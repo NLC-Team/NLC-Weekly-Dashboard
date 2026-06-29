@@ -1,0 +1,9 @@
+# Runtime dependencies
+pandas
+matplotlib
+
+# Build-only (for producing the standalone .exe)
+pyinstaller
+
+# Test-only
+pytest

@@ -1,0 +1,194 @@
+"""Pure analytics functions.
+
+These take plain Python data (lists of item dicts + parameters) and return plain
+data. No database, no UI, no global state -- which is exactly why they are easy
+to unit-test. A "pending item" dict is expected to have these keys:
+
+    assignee, client, title, status   -> str
+    first_seen                         -> datetime.date (when we first saw it pending)
+    source_date                        -> datetime.date | None (date from the CSV, if any)
+
+`enrich_items` adds `age_days` and `overdue` to each item; the aggregation
+helpers below assume that enrichment has already happened.
+"""
+from __future__ import annotations
+
+from datetime import date
+from typing import Iterable
+
+from config import AGE_BUCKETS, classify_return_type
+
+
+def item_age_days(item: dict, today: date) -> int:
+    """Days an item has been open.
+
+    Prefers the real date from the CSV (`source_date`); falls back to how long we
+    have been tracking the item (`first_seen`). Never negative.
+    """
+    basis = item.get("source_date") or item.get("first_seen")
+    if basis is None:
+        return 0
+    return max(0, (today - basis).days)
+
+
+def enrich_items(items: Iterable[dict], today: date, overdue_days: int) -> list[dict]:
+    """Return copies of items with `age_days` and `overdue` filled in."""
+    out = []
+    for it in items:
+        age = item_age_days(it, today)
+        enriched = dict(it)
+        enriched["age_days"] = age
+        enriched["overdue"] = age > overdue_days
+        out.append(enriched)
+    return out
+
+
+def totals(items: list[dict]) -> dict:
+    """Headline numbers for the KPI cards."""
+    pending = len(items)
+    overdue = sum(1 for it in items if it.get("overdue"))
+    staff = len({it["assignee"] for it in items})
+    ages = [it["age_days"] for it in items]
+    avg_age = round(sum(ages) / len(ages), 1) if ages else 0.0
+    return {
+        "total_pending": pending,
+        "total_overdue": overdue,
+        "staff_count": staff,
+        "avg_age": avg_age,
+    }
+
+
+def per_assignee(items: list[dict]) -> list[dict]:
+    """Workload per staff member, sorted by who has the most on their plate.
+
+    Tie-breaks: more overdue first, then higher average age.
+    """
+    groups: dict[str, list[dict]] = {}
+    for it in items:
+        groups.setdefault(it["assignee"], []).append(it)
+
+    rows = []
+    for assignee, group in groups.items():
+        ages = [it["age_days"] for it in group]
+        oldest = max(group, key=lambda x: x["age_days"]) if group else None
+        rows.append(
+            {
+                "assignee": assignee,
+                "pending_count": len(group),
+                "overdue_count": sum(1 for it in group if it.get("overdue")),
+                "avg_age": round(sum(ages) / len(ages), 1) if ages else 0.0,
+                "max_age": max(ages) if ages else 0,
+                "oldest_title": oldest["title"] if oldest else "",
+            }
+        )
+
+    rows.sort(key=lambda r: (r["pending_count"], r["overdue_count"], r["avg_age"]), reverse=True)
+    return rows
+
+
+def overdue_items(items: list[dict]) -> list[dict]:
+    """All overdue items, oldest first -- the per-person 'taking too long' list."""
+    od = [it for it in items if it.get("overdue")]
+    od.sort(key=lambda x: x["age_days"], reverse=True)
+    return od
+
+
+def build_projects(items: list[dict], doc_states: dict, project_states: dict) -> list[dict]:
+    """Group enriched document-items into tax-return projects.
+
+    `items` must already be enriched (have `age_days`/`overdue`). `doc_states`
+    maps item_key -> received(bool); `project_states` maps project_key ->
+    {return_type, completed}. Returns one dict per project, open ones first.
+    """
+    groups: dict[str, list[dict]] = {}
+    for it in items:
+        groups.setdefault(it.get("project_key") or ("c:" + it["client"].strip().lower()), []).append(it)
+
+    projects = []
+    for pkey, docs in groups.items():
+        state = project_states.get(pkey, {})
+        # Effective return type: manual override wins, else classify a raw value.
+        rtype = state.get("return_type")
+        if not rtype:
+            raw = next((d.get("return_type_raw") for d in docs if d.get("return_type_raw")), None)
+            rtype = classify_return_type(raw)
+        completed = bool(state.get("completed", False))
+
+        doc_rows = []
+        received_count = 0
+        for d in docs:
+            recv = bool(doc_states.get(d["item_key"], False))
+            received_count += 1 if recv else 0
+            doc_rows.append(
+                {
+                    "item_key": d["item_key"],
+                    "title": d["title"],
+                    "status": d["status"],
+                    "age_days": d["age_days"],
+                    "overdue": d["overdue"],
+                    "received": recv,
+                }
+            )
+        doc_rows.sort(key=lambda x: (x["received"], -x["age_days"]))  # outstanding & oldest first
+
+        client = next((d["client"] for d in docs if d["client"]), "(no client)")
+        days_open = max((d["age_days"] for d in docs), default=0)
+        projects.append(
+            {
+                "project_key": pkey,
+                "client": client,
+                "return_type": rtype,
+                "completed": completed,
+                "open": not completed,
+                "documents": doc_rows,
+                "total_docs": len(doc_rows),
+                "received_docs": received_count,
+                "outstanding_docs": len(doc_rows) - received_count,
+                "outstanding_titles": [d["title"] for d in doc_rows if not d["received"]],
+                "pct_complete": round(100 * received_count / len(doc_rows)) if doc_rows else 0,
+                "days_open": days_open,
+                "overdue": any(d["overdue"] for d in doc_rows),
+            }
+        )
+
+    projects.sort(key=lambda p: (p["completed"], -p["outstanding_docs"], -p["days_open"]))
+    return projects
+
+
+def project_totals(projects: list[dict]) -> dict:
+    """Headline numbers for the tax-return tracker."""
+    open_projects = [p for p in projects if p["open"]]
+    by_type = {"Individual": 0, "Business": 0, "Unclassified": 0}
+    for p in open_projects:
+        by_type[p["return_type"]] = by_type.get(p["return_type"], 0) + 1
+    pcts = [p["pct_complete"] for p in open_projects]
+    return {
+        "open_total": len(open_projects),
+        "open_individual": by_type["Individual"],
+        "open_business": by_type["Business"],
+        "open_unclassified": by_type["Unclassified"],
+        "completed_total": sum(1 for p in projects if p["completed"]),
+        "avg_pct_complete": round(sum(pcts) / len(pcts)) if pcts else 0,
+        "docs_outstanding": sum(p["outstanding_docs"] for p in open_projects),
+    }
+
+
+def age_distribution(items: list[dict], buckets: list[int] | None = None) -> list[tuple[str, int]]:
+    """Counts of items per age bucket, for the distribution chart."""
+    buckets = buckets or AGE_BUCKETS
+    labels = []
+    lo = 0
+    for hi in buckets:
+        labels.append((f"{lo}-{hi}d", lo, hi))
+        lo = hi + 1
+    labels.append((f"{buckets[-1] + 1}d+", buckets[-1] + 1, None))
+
+    counts = []
+    for label, low, high in labels:
+        n = sum(
+            1
+            for it in items
+            if it["age_days"] >= low and (high is None or it["age_days"] <= high)
+        )
+        counts.append((label, n))
+    return counts

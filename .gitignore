@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local application data (per-user database lives in %LOCALAPPDATA%, but ignore any stray copies)
+*.db
+
+# PyInstaller working dir (the built exe in dist/ is kept intentionally)
+build/
+*.spec.bak
