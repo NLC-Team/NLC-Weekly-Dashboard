@@ -1,6 +1,9 @@
 # Runtime dependencies
 pandas
 matplotlib
+flask
+waitress       # production WSGI server for the web dashboard
+openpyxl       # read .xlsx / .xls Excel imports
 
 # Build-only (for producing the standalone .exe)
 pyinstaller

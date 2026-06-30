@@ -35,9 +35,8 @@ class ProjectsView(ttk.Frame):
         cards.pack(fill="x")
         self.kpi_open = KPICard(cards, "Open returns", COLORS["accent"])
         self.kpi_ind = KPICard(cards, "Individual", COLORS["text"])
-        self.kpi_bus = KPICard(cards, "Business", COLORS["text"])
         self.kpi_out = KPICard(cards, "Documents outstanding", COLORS["warn"])
-        for i, c in enumerate((self.kpi_open, self.kpi_ind, self.kpi_bus, self.kpi_out)):
+        for i, c in enumerate((self.kpi_open, self.kpi_ind, self.kpi_out)):
             c.grid(row=0, column=i, padx=(0 if i == 0 else 10, 0), sticky="ew")
             cards.grid_columnconfigure(i, weight=1)
 
@@ -146,7 +145,6 @@ class ProjectsView(ttk.Frame):
         totals = data.get("project_totals", {})
         self.kpi_open.set_value(totals.get("open_total", 0))
         self.kpi_ind.set_value(totals.get("open_individual", 0))
-        self.kpi_bus.set_value(totals.get("open_business", 0))
         self.kpi_out.set_value(totals.get("docs_outstanding", 0))
 
         # Filter chip styling + counts

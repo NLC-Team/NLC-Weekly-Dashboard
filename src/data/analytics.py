@@ -49,7 +49,7 @@ def totals(items: list[dict]) -> dict:
     overdue = sum(1 for it in items if it.get("overdue"))
     staff = len({it["assignee"] for it in items})
     ages = [it["age_days"] for it in items]
-    avg_age = round(sum(ages) / len(ages), 1) if ages else 0.0
+    avg_age = round(sum(ages) / len(ages)) if ages else 0
     return {
         "total_pending": pending,
         "total_overdue": overdue,
@@ -76,9 +76,9 @@ def per_assignee(items: list[dict]) -> list[dict]:
                 "assignee": assignee,
                 "pending_count": len(group),
                 "overdue_count": sum(1 for it in group if it.get("overdue")),
-                "avg_age": round(sum(ages) / len(ages), 1) if ages else 0.0,
+                "avg_age": round(sum(ages) / len(ages)) if ages else 0,
                 "max_age": max(ages) if ages else 0,
-                "oldest_title": oldest["title"] if oldest else "",
+                "oldest_client": oldest["client"] if oldest else "",
             }
         )
 
@@ -129,7 +129,7 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
                     "received": recv,
                 }
             )
-        doc_rows.sort(key=lambda x: (x["received"], -x["age_days"]))  # outstanding & oldest first
+        doc_rows.sort(key=lambda x: -x["age_days"])  # oldest first; received state doesn't shift position
 
         client = next((d["client"] for d in docs if d["client"]), "(no client)")
         days_open = max((d["age_days"] for d in docs), default=0)
@@ -151,7 +151,7 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
             }
         )
 
-    projects.sort(key=lambda p: (p["completed"], -p["outstanding_docs"], -p["days_open"]))
+    projects.sort(key=lambda p: (p["completed"], p["client"].lower()))
     return projects
 
 

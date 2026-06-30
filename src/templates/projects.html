@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Tax returns</h1>
+<p class="subtitle">Open returns and the client documents they're waiting on. Tick documents as they arrive; mark a return complete when it's done.</p>
+
+<div class="kpi-row kpi-3" style="margin-bottom:16px">
+  <div class="kpi-card">
+    <div class="kpi-value text-accent">{{ totals.open_total }}</div>
+    <div class="kpi-label">Open returns</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value" style="color:var(--text)">{{ totals.open_individual }}</div>
+    <div class="kpi-label">Individual</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value" style="color:var(--warn)">{{ totals.docs_outstanding }}</div>
+    <div class="kpi-label">Documents outstanding</div>
+  </div>
+</div>
+
+<div class="chips" style="justify-content:space-between">
+  <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center">
+    {% for name in ['All','Individual','Business','Unclassified'] %}
+    {# Type chips always clickable. In completed mode a click exits completed
+       (done=0) and applies the filter — one click, no double-click needed. #}
+    <a class="chip {{ 'active' if filter_type == name and not show_done }}"
+       href="{{ url_for('projects', filter=name, done='0') }}">
+      {{ name }}{% if not show_done %} ({{ counts.get(name, 0) }}){% endif %}
+    </a>
+    {% endfor %}
+    <a class="chip {{ 'active' if show_done }}"
+       href="{{ url_for('projects', filter='All', done=('0' if show_done else '1')) }}"
+       style="margin-left:8px">
+      {% if show_done %}&#10003; Showing completed ({{ display|length }}) — click to exit{% else %}Show completed{% endif %}
+    </a>
+  </div>
+
+  <!-- Client search for tax returns -->
+  <div style="display:flex;align-items:center;gap:6px">
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
+         stroke="#374151" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input type="text" id="returnSearch" placeholder="Search clients…"
+           oninput="filterReturns(this.value)"
+           style="min-width:190px;font-size:12px;padding:7px 11px">
+    <span id="returnSearchCount" style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap"></span>
+  </div>
+</div>
+
+<div class="split" style="height:calc(100vh - 360px)">
+  <!-- Left: project list -->
+  <div class="split-left">
+    <div class="table-wrap" style="height:100%">
+      <table>
+        <thead>
+          <tr>
+            <th>Client / return</th>
+            <th>Type</th>
+            <th>Docs in</th>
+            <th>Days open</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="returnsBody">
+          {% for p in display %}
+          {% set is_sel = selected and p.project_key == selected.project_key %}
+          <tr class="project-row {{ 'selected' if is_sel }} {{ 'done' if p.completed }} {{ 'overdue' if p.overdue and not p.completed }}"
+              data-client="{{ p.client | lower }}"
+              data-href="{{ url_for('projects', pkey=p.project_key, filter=filter_type, done=('1' if show_done else '0')) }}">
+            <td style="font-weight:600">{{ p.client }}</td>
+            <td>{{ p.return_type }}</td>
+            <td>{{ p.received_docs }}/{{ p.total_docs }}</td>
+            <td>{{ p.days_open }}</td>
+            <td>
+              {% if p.completed %}<span class="badge badge-done">Done</span>
+              {% elif p.overdue %}<span class="badge badge-overdue">Overdue</span>
+              {% else %}<span class="badge badge-open">Open</span>{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">No returns match this filter.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Right: detail panel -->
+  <div class="split-right" id="detailPanel">
+    {% if selected %}
+    <h2 style="margin-bottom:2px">{{ selected.client }}</h2>
+    <p class="text-muted" style="font-size:12px;margin-bottom:14px">
+      {{ selected.received_docs }} of {{ selected.total_docs }} documents in ({{ selected.pct_complete }}%)
+      &nbsp;·&nbsp; open {{ selected.days_open }} days
+      {% if selected.overdue and not selected.completed %}&nbsp;·&nbsp; <span class="text-danger font-bold">OVERDUE</span>{% endif %}
+    </p>
+
+    <div class="row mb-2">
+      <form method="post" action="{{ url_for('project_type') }}" style="display:flex;gap:8px;align-items:center">
+        <input type="hidden" name="pkey" value="{{ selected.project_key }}">
+        <input type="hidden" name="filter" value="{{ filter_type }}">
+        <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
+        <label style="margin-bottom:0;text-transform:none;font-size:12px;font-weight:600">Return type:</label>
+        <select name="return_type" onchange="this.form.submit()">
+          {% for rt in return_types %}
+          <option {{ 'selected' if selected.return_type == rt }}>{{ rt }}</option>
+          {% endfor %}
+        </select>
+      </form>
+
+      <form method="post" action="{{ url_for('project_complete') }}">
+        <input type="hidden" name="pkey" value="{{ selected.project_key }}">
+        <input type="hidden" name="filter" value="{{ filter_type }}">
+        <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
+        <button type="submit" class="btn {{ 'btn-secondary' if selected.completed else 'btn-primary' }}">
+          {{ 'Reopen' if selected.completed else 'Mark complete' }}
+        </button>
+      </form>
+
+      <form method="post" action="{{ url_for('project_delete') }}"
+            onsubmit="return confirm('Delete {{ selected.client }} permanently? This removes the client and all their documents and cannot be undone.');"
+            style="margin-left:auto">
+        <input type="hidden" name="pkey" value="{{ selected.project_key }}">
+        <input type="hidden" name="filter" value="{{ filter_type }}">
+        <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
+        <button type="submit" class="btn btn-danger">Delete client</button>
+      </form>
+    </div>
+
+    <p style="font-size:12px;font-weight:700;margin-bottom:4px">Client documents</p>
+    <p class="text-muted" style="font-size:11px;margin-bottom:8px">Tick each document as it comes in from the client.</p>
+
+    <div class="check-list">
+      {% for doc in selected.documents %}
+      <form method="post" action="{{ url_for('project_doc') }}" class="check-item {{ 'received' if doc.received else ('overdue-doc' if doc.overdue) }}">
+        <input type="hidden" name="item_key" value="{{ doc.item_key }}">
+        <input type="hidden" name="received" value="{{ '0' if doc.received else '1' }}">
+        <input type="checkbox" {{ 'checked' if doc.received }} onchange="this.closest('form').submit()">
+        <label onclick="this.previousElementSibling.click()">
+          <span style="font-weight:600">{{ doc.title }}</span>
+          <span class="text-muted"> — {{ doc.status }} ({{ doc.age_days }}d)</span>
+        </label>
+      </form>
+      {% else %}
+      <p class="text-muted" style="font-size:12px">No documents for this return.</p>
+      {% endfor %}
+    </div>
+
+    {% else %}
+    <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:13px">
+      Select a return from the list.
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+const splitLeft = document.querySelector('.split-left');
+const searchBox = document.getElementById('returnSearch');
+
+function filterReturns(q) {
+  const term = q.trim().toLowerCase();
+  const rows = document.querySelectorAll('#returnsBody tr[data-client]');
+  let visible = 0;
+  rows.forEach(function(row) {
+    const match = !term || row.dataset.client.includes(term);
+    row.style.display = match ? '' : 'none';
+    if (match) visible++;
+  });
+  const countEl = document.getElementById('returnSearchCount');
+  countEl.textContent = term ? visible + ' result' + (visible === 1 ? '' : 's') : '';
+}
+
+// Selecting a client loads its detail WITHOUT reloading the page, so the
+// list never scrolls and you stay exactly where you are.
+(function () {
+  const body = document.getElementById('returnsBody');
+  if (!body) return;
+
+  async function selectRow(row) {
+    const href = row.dataset.href;
+    if (!href) return;
+    // Update highlight immediately
+    body.querySelectorAll('tr.project-row.selected')
+        .forEach(function (r) { r.classList.remove('selected'); });
+    row.classList.add('selected');
+    try {
+      const resp = await fetch(href, { headers: { 'X-Requested-With': 'fetch' } });
+      const html = await resp.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const fresh = doc.getElementById('detailPanel');
+      const current = document.getElementById('detailPanel');
+      if (fresh && current) {
+        current.innerHTML = fresh.innerHTML;          // swap detail only
+        history.replaceState(null, '', href);          // keep URL in sync
+      } else {
+        window.location.href = href;                   // fallback
+      }
+    } catch (e) {
+      window.location.href = href;                     // fallback on error
+    }
+  }
+
+  body.addEventListener('click', function (e) {
+    const row = e.target.closest('tr.project-row');
+    if (row) selectRow(row);
+  });
+})();
+</script>
+{% endblock %}

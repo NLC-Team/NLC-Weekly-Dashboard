@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Staff &#8211; Clients</h1>
+<p class="subtitle">View pending documents by staff member. Overdue items are highlighted red.</p>
+
+<div class="row mb-2" style="gap:12px;align-items:center;flex-wrap:wrap">
+  <form method="get" action="{{ url_for('person') }}" style="display:flex;gap:8px;align-items:center">
+    <label style="margin-bottom:0;text-transform:none;font-size:13px;font-weight:600;white-space:nowrap">Staff member:</label>
+    <select name="name" onchange="this.form.submit()" style="min-width:220px">
+      {% for n in names %}
+      <option value="{{ n }}" {{ 'selected' if n == selected }}>{{ n }}</option>
+      {% endfor %}
+    </select>
+  </form>
+
+  <!-- Live client search — sits directly beside the staff dropdown -->
+  <div style="display:flex;align-items:center;gap:6px">
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
+         stroke="#374151" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input type="text" id="clientSearch" placeholder="Search clients…"
+           oninput="filterClients(this.value)"
+           style="min-width:180px;font-size:12px;padding:7px 11px">
+    <span id="searchCount" style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap"></span>
+  </div>
+</div>
+
+{% if names %}
+<div class="kpi-row kpi-3">
+  <div class="kpi-card">
+    <div class="kpi-value text-accent">{{ stats.pending }}</div>
+    <div class="kpi-label">Pending</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value text-danger">{{ stats.overdue }}</div>
+    <div class="kpi-label">Overdue</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value" style="color:var(--text)">{{ stats.max_age }}</div>
+    <div class="kpi-label">Oldest (days)</div>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table id="clientTable">
+    <thead>
+      <tr>
+        <th>Client</th>
+        <th>Document / work</th>
+        <th>Status</th>
+        <th>Days open</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in items %}
+      <tr class="{{ 'overdue' if it.overdue }}" data-client="{{ it.client | lower }}">
+        <td>{{ it.client }}</td>
+        <td style="font-weight:600">{{ it.title }}</td>
+        <td>{{ it.status }}</td>
+        <td style="font-weight:700">{{ it.age_days }}</td>
+      </tr>
+      {% else %}
+      <tr id="noDataRow"><td colspan="4" style="text-align:center;padding:24px;color:var(--muted)">No pending items for this person.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div id="noResults" style="display:none;text-align:center;padding:24px;color:var(--muted);font-size:13px">
+    No clients match your search.
+  </div>
+</div>
+{% else %}
+<p class="text-muted">No data yet — import a CSV to get started.</p>
+{% endif %}
+
+<script>
+function filterClients(q) {
+  const term = q.trim().toLowerCase();
+  const rows = document.querySelectorAll('#clientTable tbody tr[data-client]');
+  let visible = 0;
+  rows.forEach(function(row) {
+    const match = !term || row.dataset.client.includes(term);
+    row.style.display = match ? '' : 'none';
+    if (match) visible++;
+  });
+  const countEl = document.getElementById('searchCount');
+  const noRes = document.getElementById('noResults');
+  if (term) {
+    countEl.textContent = visible + ' result' + (visible === 1 ? '' : 's');
+    noRes.style.display = visible === 0 ? 'block' : 'none';
+  } else {
+    countEl.textContent = '';
+    noRes.style.display = 'none';
+  }
+}
+</script>
+{% endblock %}

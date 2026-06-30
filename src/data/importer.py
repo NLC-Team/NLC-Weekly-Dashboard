@@ -27,11 +27,23 @@ _GUESS_HINTS = {
 }
 
 
-def load_csv(path: str) -> pd.DataFrame:
-    """Read a CSV as all-strings (so nothing is silently coerced)."""
-    df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+def load_file(path: str) -> pd.DataFrame:
+    """Read a CSV or Excel file as all-strings (so nothing is silently coerced)."""
+    p = path.lower()
+    if p.endswith(".xlsx") or p.endswith(".xls") or p.endswith(".xlsm"):
+        df = pd.read_excel(path, dtype=str, keep_default_na=False)
+    else:
+        try:
+            df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="latin-1")
     df.columns = [str(c).strip() for c in df.columns]
     return df
+
+
+def load_csv(path: str) -> pd.DataFrame:
+    """Backwards-compatible alias."""
+    return load_file(path)
 
 
 def header_signature(columns: list[str]) -> str:

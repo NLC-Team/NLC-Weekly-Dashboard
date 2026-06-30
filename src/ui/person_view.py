@@ -29,9 +29,8 @@ class PersonView(ttk.Frame):
         cards.pack(fill="x", pady=(14, 8))
         self.kpi_pending = KPICard(cards, "Pending", COLORS["accent"])
         self.kpi_overdue = KPICard(cards, "Overdue", COLORS["danger"])
-        self.kpi_avg = KPICard(cards, "Avg days open", COLORS["warn"])
         self.kpi_max = KPICard(cards, "Oldest (days)", COLORS["text"])
-        for i, c in enumerate((self.kpi_pending, self.kpi_overdue, self.kpi_avg, self.kpi_max)):
+        for i, c in enumerate((self.kpi_pending, self.kpi_overdue, self.kpi_max)):
             c.grid(row=0, column=i, padx=(0 if i == 0 else 10, 0), sticky="ew")
             cards.grid_columnconfigure(i, weight=1)
 
@@ -66,7 +65,6 @@ class PersonView(ttk.Frame):
         ages = [it["age_days"] for it in items]
         self.kpi_pending.set_value(pending)
         self.kpi_overdue.set_value(overdue)
-        self.kpi_avg.set_value(round(sum(ages) / len(ages), 1) if ages else 0)
         self.kpi_max.set_value(max(ages) if ages else 0)
 
         rows = [

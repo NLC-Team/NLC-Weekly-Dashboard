@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Team overview</h1>
+{% if last_import %}
+<p class="subtitle">Last import: <strong>{{ last_import.file_name }}</strong> on {{ last_import.imported_at }} &nbsp;·&nbsp; overdue = more than {{ overdue_days }} days open</p>
+{% else %}
+<p class="subtitle">No data imported yet — go to <a href="{{ url_for('import_view') }}">Import</a> to load a CSV export.</p>
+{% endif %}
+
+<div class="kpi-row kpi-4">
+  <div class="kpi-card">
+    <div class="kpi-value text-accent">{{ data.totals.total_pending }}</div>
+    <div class="kpi-label">Pending documents</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value text-danger">{{ data.totals.total_overdue }}</div>
+    <div class="kpi-label">Overdue</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value" style="color:var(--text)">{{ data.totals.staff_count }}</div>
+    <div class="kpi-label">Staff with work</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value" style="color:var(--warn)">{{ data.totals.avg_age }}</div>
+    <div class="kpi-label">Avg. days open</div>
+  </div>
+</div>
+
+<div class="charts-row">
+  <div class="chart-card">
+    {% if workload_img %}
+      <img src="data:image/png;base64,{{ workload_img }}" alt="Workload chart">
+    {% else %}
+      <div class="chart-empty">No data yet</div>
+    {% endif %}
+  </div>
+  <div class="chart-card" style="display:flex;flex-direction:column">
+    <div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:18px;letter-spacing:-.01em">Document Age</div>
+    {% if age_dist %}
+    {% set bucket_colors = ['#bfdbfe','#93c5fd','#60a5fa','#3b82f6','#2563eb','#1e3a8a'] %}
+    <div style="display:flex;gap:8px;align-items:flex-end;flex:1;min-height:130px">
+      {% for label, count in age_dist %}
+      {% set bar_h = ((count / max_age_count) * 120) | int %}
+      {% set col = bucket_colors[loop.index0] if loop.index0 < bucket_colors | length else '#1e3a8a' %}
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px">
+        <span style="font-size:19px;font-weight:800;color:var(--text);line-height:1">{{ count }}</span>
+        <div style="width:100%;height:{{ [bar_h, 5] | max }}px;background:{{ col }};border-radius:5px 5px 0 0"></div>
+        <span style="font-size:10px;font-weight:700;color:var(--muted);white-space:nowrap;text-transform:uppercase;letter-spacing:.04em">{{ label }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="chart-empty">No data yet</div>
+    {% endif %}
+  </div>
+</div>
+
+<h2>Pending workload by staff member</h2>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Staff member</th>
+        <th>Pending</th>
+        <th>Overdue</th>
+        <th>Avg days</th>
+        <th>Oldest (days)</th>
+        <th>Oldest client</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in data.per_assignee %}
+      <tr>
+        <td><a href="{{ url_for('person', name=r.assignee) }}" style="color:var(--accent);font-weight:600">{{ r.assignee }}</a></td>
+        <td>{{ r.pending_count }}</td>
+        <td>{% if r.overdue_count %}<span class="text-danger" style="font-weight:700">{{ r.overdue_count }}</span>{% else %}0{% endif %}</td>
+        <td>{{ r.avg_age }}</td>
+        <td>{{ r.max_age }}</td>
+        <td class="text-muted">{{ r.oldest_client }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No data yet — import a CSV to get started.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

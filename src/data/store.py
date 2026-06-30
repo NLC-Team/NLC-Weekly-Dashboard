@@ -58,6 +58,12 @@ CREATE TABLE IF NOT EXISTS project_state (
     completed    INTEGER DEFAULT 0,
     completed_at TEXT
 );
+-- Staff directory: names and their access roles.
+CREATE TABLE IF NOT EXISTS staff (
+    name     TEXT PRIMARY KEY,
+    role     TEXT DEFAULT 'Viewer',
+    added_at TEXT
+);
 """
 
 # Columns added after the first release; applied to older databases on open.
@@ -83,7 +89,7 @@ class Store:
     def __init__(self, db_path: str | Path | None = None):
         self.db_path = Path(db_path) if db_path else config.default_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self._migrate()
@@ -265,4 +271,35 @@ class Store:
             "completed_at=excluded.completed_at",
             (project_key, 1 if completed else 0, today.isoformat() if completed else None),
         )
+        self.conn.commit()
+
+    # ---- staff directory -----------------------------------------------
+    def get_staff(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT name, role FROM staff ORDER BY name"
+        ).fetchall()
+        return [{"name": r["name"], "role": r["role"]} for r in rows]
+
+    def upsert_staff(self, name: str, role: str, today: date | None = None) -> None:
+        added = today.isoformat() if today else None
+        self.conn.execute(
+            "INSERT INTO staff(name, role, added_at) VALUES(?, ?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET role=excluded.role",
+            (name, role, added),
+        )
+        self.conn.commit()
+
+    def remove_staff(self, name: str) -> None:
+        self.conn.execute("DELETE FROM staff WHERE name=?", (name,))
+        self.conn.commit()
+
+    # ---- delete a client / project entirely ----------------------------
+    def delete_project(self, project_key: str, item_keys: list[str]) -> None:
+        """Permanently remove a client/project: its items, document state,
+        and project state. Frees the space so it no longer appears anywhere.
+        """
+        for ik in item_keys:
+            self.conn.execute("DELETE FROM items WHERE item_key=?", (ik,))
+            self.conn.execute("DELETE FROM doc_state WHERE item_key=?", (ik,))
+        self.conn.execute("DELETE FROM project_state WHERE project_key=?", (project_key,))
         self.conn.commit()

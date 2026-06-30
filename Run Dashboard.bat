@@ -1,43 +1,31 @@
 @echo off
 REM ============================================================
-REM  Karbon Pending Dashboard - launcher
-REM  Double-click this file to open the dashboard from source.
-REM  It auto-finds a Python that has the required libraries.
+REM  NLC Financial Dashboard - web launcher
+REM  Double-click to open the dashboard in your browser.
+REM  The server runs silently in the background.
 REM ============================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
-set "APP=%~dp0src\main.py"
-set "WP=%LOCALAPPDATA%\WP\WPy64-313130\python"
+set "APP=%~dp0src\webapp.py"
+set "PY=%LOCALAPPDATA%\WP\WPy64-313130\python\python.exe"
+set "PYW=%LOCALAPPDATA%\WP\WPy64-313130\python\pythonw.exe"
 
-REM 1) Portable WinPython that ships with pandas/matplotlib (most reliable)
-if exist "%WP%\python.exe" (
-  "%WP%\python.exe" -c "import pandas, matplotlib" 1>nul 2>nul
-  if !errorlevel! equ 0 (
-    start "" "%WP%\pythonw.exe" "%APP%"
-    exit /b 0
-  )
+if not exist "%PY%" set "PY=python"
+if not exist "%PYW%" set "PYW=pythonw"
+
+REM Install dependencies silently using python.exe (has output)
+"%PY%" -c "import flask" 2>nul
+if !errorlevel! neq 0 (
+    echo Installing Flask...
+    "%PY%" -m pip install flask --quiet
+)
+"%PY%" -c "import waitress" 2>nul
+if !errorlevel! neq 0 (
+    echo Installing Waitress...
+    "%PY%" -m pip install waitress --quiet
 )
 
-REM 2) "python" on your PATH
-python -c "import pandas, matplotlib" 1>nul 2>nul
-if !errorlevel! equ 0 (
-  start "" pythonw "%APP%"
-  exit /b 0
-)
-
-REM 3) the "py" launcher on your PATH
-py -c "import pandas, matplotlib" 1>nul 2>nul
-if !errorlevel! equ 0 (
-  start "" pyw "%APP%"
-  exit /b 0
-)
-
-echo.
-echo Could not find a Python that has the required libraries (pandas, matplotlib).
-echo.
-echo  - Easiest: double-click  dist\KarbonDashboard.exe  (no Python needed)
-echo  - Or install the libraries into your Python:
-echo        python -m pip install pandas matplotlib
-echo.
-pause
-exit /b 1
+REM Launch with pythonw.exe — no console window, runs in background
+REM The dashboard opens your browser automatically
+start "" "%PYW%" "%APP%"
+exit /b 0

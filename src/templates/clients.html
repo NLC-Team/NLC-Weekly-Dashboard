@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Delete clients</h1>
+<p class="subtitle">Admin only. Select one or more clients and permanently remove them and all their documents.</p>
+
+{% if msg %}
+<div class="msg msg-ok">{{ msg }}</div>
+{% endif %}
+
+{% if not allowed %}
+<div class="card">
+  <div class="card-title text-danger">Admins only</div>
+  <p style="font-size:13px;color:var(--muted)">
+    This section is restricted to administrators. Use the <strong>Acting as</strong> selector at the
+    bottom of the sidebar to switch to an Admin account, or ask an administrator to grant you the
+    Admin role on the <a href="{{ url_for('staff') }}">Staff &amp; Roles</a> page.
+  </p>
+</div>
+{% else %}
+
+<form method="post" action="{{ url_for('clients_delete') }}"
+      onsubmit="return confirmDelete();">
+  <div class="row mb-2" style="gap:12px;align-items:center;flex-wrap:wrap">
+    <button type="submit" class="btn btn-danger" id="deleteBtn" disabled>Delete selected (0)</button>
+    <span class="text-muted" style="font-size:12px">Tick the clients you want to remove. This cannot be undone.</span>
+    <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
+           stroke="#374151" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input type="text" id="clientSearch" placeholder="Search clients…"
+             oninput="filterClients(this.value)"
+             style="min-width:190px;font-size:12px;padding:7px 11px">
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table id="clientsTable">
+      <thead>
+        <tr>
+          <th style="width:42px"><input type="checkbox" id="selectAll" onchange="toggleAll(this)"
+                style="width:16px;height:16px;cursor:pointer;accent-color:var(--danger)"></th>
+          <th>Client</th>
+          <th>Type</th>
+          <th>Docs</th>
+          <th>Days open</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="clientsBody">
+        {% for p in projects %}
+        <tr data-client="{{ p.client | lower }}">
+          <td><input type="checkbox" name="pkey" value="{{ p.project_key }}" class="rowChk"
+                onchange="updateCount()" style="width:16px;height:16px;cursor:pointer;accent-color:var(--danger)"></td>
+          <td style="font-weight:600">{{ p.client }}</td>
+          <td>{{ p.return_type }}</td>
+          <td>{{ p.received_docs }}/{{ p.total_docs }}</td>
+          <td>{{ p.days_open }}</td>
+          <td>
+            {% if p.completed %}<span class="badge badge-done">Done</span>
+            {% elif p.overdue %}<span class="badge badge-overdue">Overdue</span>
+            {% else %}<span class="badge badge-open">Open</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No clients to show.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</form>
+
+<script>
+function checkedBoxes() {
+  return Array.from(document.querySelectorAll('.rowChk')).filter(function (c) {
+    return c.checked && c.closest('tr').style.display !== 'none';
+  });
+}
+function updateCount() {
+  const n = document.querySelectorAll('.rowChk:checked').length;
+  const btn = document.getElementById('deleteBtn');
+  btn.textContent = 'Delete selected (' + n + ')';
+  btn.disabled = n === 0;
+}
+function toggleAll(master) {
+  document.querySelectorAll('#clientsBody tr').forEach(function (row) {
+    if (row.style.display === 'none') return;  // only toggle visible rows
+    const chk = row.querySelector('.rowChk');
+    if (chk) chk.checked = master.checked;
+  });
+  updateCount();
+}
+function filterClients(q) {
+  const term = q.trim().toLowerCase();
+  document.querySelectorAll('#clientsBody tr[data-client]').forEach(function (row) {
+    row.style.display = (!term || row.dataset.client.includes(term)) ? '' : 'none';
+  });
+}
+function confirmDelete() {
+  const n = document.querySelectorAll('.rowChk:checked').length;
+  if (n === 0) return false;
+  return confirm('Permanently delete ' + n + ' client' + (n === 1 ? '' : 's') +
+                 ' and all their documents? This cannot be undone.');
+}
+</script>
+{% endif %}
+{% endblock %}

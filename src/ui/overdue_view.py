@@ -17,11 +17,10 @@ class OverdueView(ttk.Frame):
         self.subtitle = ttk.Label(self, text="", foreground=COLORS["muted"])
         self.subtitle.pack(anchor="w", pady=(2, 12))
 
-        # Per-person alert banner.
-        self.banner = tk.Frame(self, bg=COLORS["danger_bg"], highlightthickness=1,
-                               highlightbackground=COLORS["danger"])
+        # Per-person alert banner (color set dynamically in on_data).
+        self.banner = tk.Frame(self, highlightthickness=1)
         self.banner.pack(fill="x", pady=(0, 12))
-        self.banner_body = tk.Frame(self.banner, bg=COLORS["danger_bg"])
+        self.banner_body = tk.Frame(self.banner)
         self.banner_body.pack(fill="x", padx=12, pady=10)
 
         self.table = SortableTable(self, [
@@ -52,18 +51,25 @@ class OverdueView(ttk.Frame):
             by_person.setdefault(it["assignee"], []).append(it)
 
         if not by_person:
+            banner_bg = "#f0fdf4"
+            banner_border = "#86efac"
+            self.banner.configure(bg=banner_bg, highlightbackground=banner_border)
+            self.banner_body.configure(bg=banner_bg)
             tk.Label(self.banner_body, text="No overdue items. Nice work!",
-                     bg=COLORS["danger_bg"], fg=COLORS["ok"], font=FONTS["h2"]).pack(anchor="w")
+                     bg=banner_bg, fg=COLORS["ok"], font=FONTS["h2"]).pack(anchor="w")
         else:
+            banner_bg = COLORS["danger_bg"]
+            self.banner.configure(bg=banner_bg, highlightbackground=COLORS["danger"])
+            self.banner_body.configure(bg=banner_bg)
             tk.Label(self.banner_body, text="Action needed — longest-waiting items per person:",
-                     bg=COLORS["danger_bg"], fg=COLORS["danger"],
+                     bg=banner_bg, fg=COLORS["danger"],
                      font=("Segoe UI Semibold", 11)).pack(anchor="w", pady=(0, 4))
             ranked = sorted(by_person.items(), key=lambda kv: len(kv[1]), reverse=True)
             for person, items in ranked:
                 worst = max(items, key=lambda x: x["age_days"])
                 msg = (f"• {person}: {len(items)} overdue — oldest is "
                        f"\"{worst['title']}\" ({worst['client']}) at {worst['age_days']} days")
-                tk.Label(self.banner_body, text=msg, bg=COLORS["danger_bg"], fg=COLORS["text"],
+                tk.Label(self.banner_body, text=msg, bg=banner_bg, fg=COLORS["text"],
                          font=FONTS["body"], anchor="w", justify="left").pack(anchor="w")
 
         rows = [

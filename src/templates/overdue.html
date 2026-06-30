@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Overdue statements</h1>
+<p class="subtitle">{{ overdue_items|length }} item(s) open more than {{ overdue_days }} days.</p>
+
+{% if not ranked %}
+<div class="banner banner-ok">
+  <span class="banner-ok-text">No overdue items. Nice work!</span>
+</div>
+{% else %}
+<div class="banner banner-warn">
+  <div class="banner-warn-title">Action needed — longest-waiting items per person:</div>
+  {% for person, items in ranked %}
+  <div class="banner-item">
+    • <strong>{{ person }}</strong>: {{ items|length }} overdue — longest wait: <strong>{{ worst[person].client }}</strong> ({{ worst[person].age_days }} days)
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Staff member</th>
+        <th>Client</th>
+        <th>Document / work</th>
+        <th>Status</th>
+        <th>Days open</th>
+        <th>Days overdue</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in overdue_items %}
+      <tr class="overdue">
+        <td><a href="{{ url_for('person', name=it.assignee) }}" style="color:var(--danger);font-weight:600">{{ it.assignee }}</a></td>
+        <td>{{ it.client }}</td>
+        <td style="font-weight:600">{{ it.title }}</td>
+        <td>{{ it.status }}</td>
+        <td style="font-weight:700">{{ it.age_days }}</td>
+        <td style="font-weight:700">{{ it.age_days - overdue_days }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No overdue items.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

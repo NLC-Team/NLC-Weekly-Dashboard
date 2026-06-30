@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Settings</h1>
+<p class="subtitle">Dashboard configuration and data options.</p>
+
+{% if msg %}<div class="msg msg-ok">{{ msg }}</div>{% endif %}
+
+<!-- Overdue threshold -->
+<div class="card mb-2">
+  <div class="card-title">Overdue threshold</div>
+  <p class="text-muted mb-1" style="font-size:12px">Flag a document as overdue once it has been open more than this many days.</p>
+  <form method="post" action="{{ url_for('settings_days') }}" class="row">
+    <input type="number" name="days" value="{{ overdue_days }}" min="1" max="365" style="width:80px">
+    <span style="font-size:12px;color:var(--muted)">days</span>
+    <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+  </form>
+</div>
+
+<!-- Pending statuses -->
+<div class="card mb-2">
+  <div class="card-title">Pending statuses</div>
+  <p class="text-muted mb-1" style="font-size:12px">
+    Check the statuses that count as "still pending". Only rows with these statuses are included in the dashboard.
+    Leave all unchecked to treat every row as pending.
+  </p>
+  {% if known_statuses %}
+  <form method="post" action="{{ url_for('settings_statuses') }}">
+    <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:12px">
+      {% for s in known_statuses %}
+      <label style="display:flex;align-items:center;gap:9px;text-transform:none;font-size:12px;font-weight:400;letter-spacing:0;cursor:pointer">
+        <input type="checkbox" name="statuses" value="{{ s }}"
+               {{ 'checked' if s in pending_statuses }}
+               style="width:15px;height:15px;accent-color:var(--accent)">
+        {{ s }}
+      </label>
+      {% endfor %}
+    </div>
+    <button type="submit" class="btn btn-primary btn-sm">Save statuses</button>
+  </form>
+  {% else %}
+  <p class="text-muted" style="font-size:12px">Import a CSV first to see available statuses here.</p>
+  {% endif %}
+</div>
+
+<!-- Column mapping note -->
+<div class="card mb-2">
+  <div class="card-title">Column mapping</div>
+  <p class="text-muted" style="font-size:12px">
+    Column mappings are saved per CSV layout and applied automatically on the next import.
+    To change them, go to <a href="{{ url_for('import_view') }}" style="color:var(--accent)">Import</a> and re-upload your file.
+  </p>
+</div>
+
+<!-- Database location -->
+<div class="card">
+  <div class="card-title">Data storage location</div>
+  <p class="text-muted mb-1" style="font-size:12px">
+    Where the dashboard keeps its history and settings. Point this at a shared network folder so the whole team's imports build up in one place.
+    Change it via the <code>db_path</code> key in <span class="monospace">app_config.json</span> in your %LOCALAPPDATA%\KarbonPendingDashboard folder.
+  </p>
+  <p class="monospace" style="background:var(--bg);padding:8px 12px;border-radius:6px;font-size:11px;color:var(--text)">{{ db_path }}</p>
+</div>
+{% endblock %}

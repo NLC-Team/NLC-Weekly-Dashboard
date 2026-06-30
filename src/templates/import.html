@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Import</h1>
+<p class="subtitle">Upload a CSV export to update the dashboard with the latest data.</p>
+
+<!-- Step indicator -->
+<div class="step-row">
+  <div class="step {{ 'active' if step == 0 else '' }}">
+    <span class="step-num">1</span> Upload CSV
+  </div>
+  <div class="step-sep"></div>
+  <div class="step {{ 'active' if step == 1 else '' }}">
+    <span class="step-num">2</span> Map columns &amp; statuses
+  </div>
+  <div class="step-sep"></div>
+  <div class="step {{ 'active' if result else '' }}">
+    <span class="step-num">3</span> Done
+  </div>
+</div>
+
+{% if result %}
+<!-- Step 3: result -->
+<div class="card">
+  <div class="card-title text-ok">&#10003; Import complete</div>
+  <div style="display:grid;grid-template-columns:repeat(4,auto);gap:24px;margin-bottom:16px">
+    <div><div class="kpi-value text-accent" style="font-size:24px">{{ result.rows }}</div><div class="kpi-label">Total rows</div></div>
+    <div><div class="kpi-value text-accent" style="font-size:24px">{{ result.pending }}</div><div class="kpi-label">Pending found</div></div>
+    <div><div class="kpi-value text-ok" style="font-size:24px">{{ result.new }}</div><div class="kpi-label">New items</div></div>
+    <div><div class="kpi-value" style="font-size:24px;color:var(--muted)">{{ result.resolved }}</div><div class="kpi-label">Resolved</div></div>
+  </div>
+  <a href="{{ url_for('overview') }}" class="btn btn-primary">Go to Overview</a>
+</div>
+
+{% elif step == 1 %}
+<!-- Step 2: column mapping + statuses -->
+<div class="card">
+  <div class="card-title">Map columns — {{ ctx.filename }}</div>
+  <p class="text-muted mb-2" style="font-size:12px">
+    {{ ctx.row_count }} rows detected. Match each dashboard field to a column in your CSV.
+    Required fields are marked <span style="color:var(--danger)">*</span>.
+    Column guesses are pre-filled — adjust if anything looks wrong.
+  </p>
+
+  <form method="post" action="{{ url_for('import_run') }}">
+    <div class="map-grid mb-2">
+      {% for field, label, required in logical_fields %}
+      <div style="font-size:12px;font-weight:{{ '700' if required else '400' }}">
+        {{ label }}{% if required %}<span class="req">*</span>{% endif %}
+      </div>
+      <select name="map_{{ field }}">
+        <option value="">— not mapped —</option>
+        {% for col in ctx.columns %}
+        <option value="{{ col }}" {{ 'selected' if ctx.guesses.get(field) == col }}>{{ col }}</option>
+        {% endfor %}
+      </select>
+      {% endfor %}
+    </div>
+
+    {% if ctx.all_statuses %}
+    <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px">
+      <p style="font-size:12px;font-weight:700;margin-bottom:6px">Which statuses are "pending"?</p>
+      <p class="text-muted mb-1" style="font-size:11px">Check every status that means a document is still waiting. Leave all unchecked to treat every row as pending.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:8px 20px;margin-bottom:14px">
+        {% for s in ctx.all_statuses %}
+        <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer">
+          <input type="checkbox" name="pending_status" value="{{ s }}"
+                 style="width:15px;height:15px;accent-color:var(--accent)">
+          {{ s }}
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="row">
+      <button type="submit" class="btn btn-primary">Run import</button>
+      <a href="{{ url_for('import_cancel') }}" class="btn btn-secondary">Cancel</a>
+    </div>
+  </form>
+</div>
+
+{% else %}
+<!-- Step 1: upload form -->
+<div class="card">
+  <div class="card-title">Upload file</div>
+  {% if upload_error %}
+  <div class="msg msg-err" style="margin-bottom:14px">{{ upload_error }}</div>
+  {% endif %}
+  <p class="text-muted mb-2" style="font-size:12px">
+    Upload your Excel (.xlsx) or CSV export. The dashboard will remember the column mapping for next time.
+  </p>
+  <form method="post" action="{{ url_for('import_upload') }}" enctype="multipart/form-data" class="row">
+    <input type="file" name="csv_file" accept=".csv,.xlsx,.xls,.xlsm"
+           style="font-size:12px;padding:6px;border:1px solid var(--border);border-radius:7px;background:white">
+    <button type="submit" class="btn btn-primary">Upload &amp; continue</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

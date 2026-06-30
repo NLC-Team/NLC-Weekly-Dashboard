@@ -38,7 +38,7 @@ class OverviewView(ttk.Frame):
         charts.grid_columnconfigure(1, weight=1)
 
         # Leaderboard table
-        ttk.Label(self, text="Who has the most on their plate", style="H1.TLabel").pack(
+        ttk.Label(self, text="Pending workload by staff member", style="H1.TLabel").pack(
             anchor="w", pady=(10, 6))
         self.table = SortableTable(self, [
             ("assignee", "Staff member", 200, "w"),

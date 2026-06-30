@@ -26,6 +26,7 @@ from ui.overview_view import OverviewView  # noqa: E402
 from ui.person_view import PersonView  # noqa: E402
 from ui.projects_view import ProjectsView  # noqa: E402
 from ui.settings_view import SettingsView  # noqa: E402
+from ui.staff_view import StaffView  # noqa: E402
 
 NAV = [
     ("import", "Import"),
@@ -33,6 +34,7 @@ NAV = [
     ("projects", "Tax returns"),
     ("person", "By person"),
     ("overdue", "Overdue"),
+    ("staff", "Staff & Roles"),
     ("settings", "Settings"),
 ]
 
@@ -90,8 +92,8 @@ class App(tk.Tk):
         sidebar.pack_propagate(False)
 
         tk.Label(sidebar, text="Karbon\nPending Dashboard", bg=theme.COLORS["sidebar"],
-                 fg="white", font=("Segoe UI Semibold", 13), justify="left").pack(
-            anchor="w", padx=16, pady=(22, 24))
+                 fg="white", font=theme.FONTS["nav_header"], justify="left").pack(
+            anchor="w", padx=18, pady=(24, 26))
 
         self.nav_buttons: dict[str, tk.Button] = {}
         for key, label in NAV:
@@ -114,6 +116,7 @@ class App(tk.Tk):
             "projects": ProjectsView(self.content, self),
             "person": PersonView(self.content, self),
             "overdue": OverdueView(self.content, self),
+            "staff": StaffView(self.content, self),
             "settings": SettingsView(self.content, self),
         }
         for view in self.views.values():

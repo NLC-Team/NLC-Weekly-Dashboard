@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Staff &amp; Roles</h1>
+<p class="subtitle">Add team members and record what level of access they hold in the dashboard.</p>
+
+{% if msg %}
+<div class="msg {{ 'msg-ok' if msg_type == 'ok' else 'msg-err' }}">{{ msg }}</div>
+{% endif %}
+
+<!-- Role legend -->
+<div class="card mb-2">
+  <div class="card-title">Access levels</div>
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <div class="row">
+      <span class="badge badge-admin">Admin</span>
+      <span style="font-size:12px">Full access — import data, edit settings, manage staff</span>
+    </div>
+    <div class="row">
+      <span class="badge badge-manager">Manager</span>
+      <span style="font-size:12px">View analytics and mark items received / complete</span>
+    </div>
+    <div class="row">
+      <span class="badge badge-viewer">Viewer</span>
+      <span style="font-size:12px">Read-only access to the dashboard</span>
+    </div>
+  </div>
+</div>
+
+<!-- Add member -->
+<div class="card mb-2">
+  <div class="card-title">Add staff member</div>
+  <form method="post" action="{{ url_for('staff_add') }}" class="row">
+    <div>
+      <label>Full name</label>
+      <input type="text" name="name" placeholder="e.g. Sarah Johnson" style="width:240px">
+    </div>
+    <div>
+      <label>Role</label>
+      <select name="role">
+        <option>Viewer</option>
+        <option>Manager</option>
+        <option>Admin</option>
+      </select>
+    </div>
+    <div style="align-self:flex-end">
+      <button type="submit" class="btn btn-primary">Add member</button>
+    </div>
+  </form>
+</div>
+
+<!-- Members table -->
+<div class="card">
+  <div class="card-title">Current staff</div>
+  {% if members %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Role</th>
+          <th>Access level</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in members %}
+        <tr>
+          <td style="font-weight:600">{{ m.name }}</td>
+          <td>
+            <form method="post" action="{{ url_for('staff_role') }}" style="display:inline">
+              <input type="hidden" name="name" value="{{ m.name }}">
+              <select name="role" onchange="this.form.submit()" style="font-size:11px;padding:4px 8px">
+                {% for r in ['Viewer','Manager','Admin'] %}
+                <option {{ 'selected' if m.role == r }}>{{ r }}</option>
+                {% endfor %}
+              </select>
+            </form>
+          </td>
+          <td class="text-muted">
+            {% if m.role == 'Admin' %}Full access — import data, edit settings, manage staff
+            {% elif m.role == 'Manager' %}View analytics and mark items received / complete
+            {% else %}Read-only access to the dashboard{% endif %}
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('staff_remove') }}"
+                  onsubmit="return confirm('Remove {{ m.name }}?')">
+              <input type="hidden" name="name" value="{{ m.name }}">
+              <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-muted" style="font-size:12px">No staff members added yet.</p>
+  {% endif %}
+</div>
+{% endblock %}
