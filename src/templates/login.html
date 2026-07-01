@@ -1,0 +1,33 @@
+{% extends "auth_base.html" %}
+{% block title %}Sign in — NLC Financial Dashboard{% endblock %}
+{% block auth %}
+<h1>NLC Financial Dashboard</h1>
+<p class="sub">Sign in with your email or username.</p>
+
+{% if error %}
+<div class="msg msg-err">
+  {{ error }}
+  {% if unverified_email %}
+  <div style="margin-top:6px"><a href="{{ url_for('verify', email=unverified_email) }}">Verify your email</a></div>
+  {% endif %}
+</div>
+{% endif %}
+
+<form method="post" action="{{ url_for('login') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label for="email">Email or username</label>
+  <input type="text" id="email" name="email" autocomplete="username" autofocus required>
+  <label for="password">Password</label>
+  <input type="password" id="password" name="password" autocomplete="current-password" required>
+  <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;
+               font-weight:500;font-size:13px;color:var(--text);margin:-4px 0 16px;cursor:pointer">
+    <input type="checkbox" name="remember" style="width:15px;height:15px;accent-color:var(--navy)">
+    Keep me signed in
+  </label>
+  <button type="submit" class="btn">Sign in</button>
+</form>
+
+<div class="auth-foot">
+  No account? <a href="{{ url_for('signup') }}">Request access</a>
+</div>
+{% endblock %}

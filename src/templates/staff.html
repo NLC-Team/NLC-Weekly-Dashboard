@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Staff &amp; Roles</h1>
-<p class="subtitle">Add team members and record what level of access they hold in the dashboard.</p>
+<p class="subtitle">Add team members, approve access requests, and manage login credentials.</p>
 
 {% if msg %}
 <div class="msg {{ 'msg-ok' if msg_type == 'ok' else 'msg-err' }}">{{ msg }}</div>
@@ -13,7 +13,7 @@
   <div style="display:flex;flex-direction:column;gap:10px">
     <div class="row">
       <span class="badge badge-admin">Admin</span>
-      <span style="font-size:12px">Full access — import data, edit settings, manage staff</span>
+      <span style="font-size:12px">Full access — import data, edit settings, manage staff, delete clients</span>
     </div>
     <div class="row">
       <span class="badge badge-manager">Manager</span>
@@ -26,13 +26,81 @@
   </div>
 </div>
 
+<!-- Pending access requests -->
+{% if pending %}
+<div class="card mb-2" style="border-color:var(--danger-border)">
+  <div class="card-title">Pending access requests ({{ pending|length }})</div>
+  <p class="text-muted mb-1" style="font-size:12px">People who signed up. They can only sign in once
+    their email is verified <em>and</em> you approve them with a role.</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Email</th><th>Email verified</th><th>Approve as</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for p in pending %}
+        <tr>
+          <td style="font-weight:600">{{ p.name }}</td>
+          <td class="monospace">{{ p.email or '—' }}</td>
+          <td>
+            {% if p.email_verified %}<span class="badge badge-done">Verified</span>
+            {% else %}<span class="badge badge-overdue">Not verified</span>{% endif %}
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('staff_approve') }}" class="row" style="gap:6px">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="name" value="{{ p.name }}">
+              <select name="role" style="font-size:11px;padding:4px 8px">
+                <option>Viewer</option>
+                <option>Manager</option>
+                <option>Admin</option>
+              </select>
+              <button type="submit" class="btn btn-primary btn-sm">Approve</button>
+            </form>
+          </td>
+          <td>
+            <div class="row" style="gap:6px">
+              {% if not p.email_verified %}
+              <form method="post" action="{{ url_for('staff_resend') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="name" value="{{ p.name }}">
+                <button type="submit" class="btn btn-secondary btn-sm">Resend code</button>
+              </form>
+              {% endif %}
+              <form method="post" action="{{ url_for('staff_reject') }}"
+                    onsubmit="return confirm('Reject and delete the request from {{ p.name }}?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="name" value="{{ p.name }}">
+                <button type="submit" class="btn btn-danger btn-sm">Reject</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 <!-- Add member -->
 <div class="card mb-2">
   <div class="card-title">Add staff member</div>
-  <form method="post" action="{{ url_for('staff_add') }}" class="row">
+  <p class="text-muted mb-1" style="font-size:12px">Creates an active account that can sign in
+    immediately with the email and password you set (no verification needed — you're vouching for them).</p>
+  <form method="post" action="{{ url_for('staff_add') }}" class="row" style="align-items:flex-end">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div>
       <label>Full name</label>
-      <input type="text" name="name" placeholder="e.g. Sarah Johnson" style="width:240px">
+      <input type="text" name="name" placeholder="e.g. Sarah Johnson" style="width:190px" required>
+    </div>
+    <div>
+      <label>Work email</label>
+      <input type="text" name="email" placeholder="sjohnson@nlcfcpa.com" style="width:200px" required>
+    </div>
+    <div>
+      <label>Initial password</label>
+      <input type="text" name="password" placeholder="min 8 characters" style="width:150px" required>
     </div>
     <div>
       <label>Role</label>
@@ -42,7 +110,7 @@
         <option>Admin</option>
       </select>
     </div>
-    <div style="align-self:flex-end">
+    <div>
       <button type="submit" class="btn btn-primary">Add member</button>
     </div>
   </form>
@@ -57,8 +125,10 @@
       <thead>
         <tr>
           <th>Name</th>
+          <th>Email</th>
           <th>Role</th>
-          <th>Access level</th>
+          <th>Login</th>
+          <th></th>
           <th></th>
         </tr>
       </thead>
@@ -66,8 +136,10 @@
         {% for m in members %}
         <tr>
           <td style="font-weight:600">{{ m.name }}</td>
+          <td class="monospace">{{ m.email or m.username or '—' }}</td>
           <td>
             <form method="post" action="{{ url_for('staff_role') }}" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <input type="hidden" name="name" value="{{ m.name }}">
               <select name="role" onchange="this.form.submit()" style="font-size:11px;padding:4px 8px">
                 {% for r in ['Viewer','Manager','Admin'] %}
@@ -76,14 +148,29 @@
               </select>
             </form>
           </td>
-          <td class="text-muted">
-            {% if m.role == 'Admin' %}Full access — import data, edit settings, manage staff
-            {% elif m.role == 'Manager' %}View analytics and mark items received / complete
-            {% else %}Read-only access to the dashboard{% endif %}
+          <td>
+            {% if m.has_login %}<span class="badge badge-done">Can sign in</span>
+            {% else %}<span class="badge badge-overdue">No login</span>{% endif %}
+          </td>
+          <td>
+            <details>
+              <summary style="cursor:pointer;font-size:11px;color:var(--accent);font-weight:700">
+                {{ 'Reset login' if m.has_login else 'Set login' }}
+              </summary>
+              <form method="post" action="{{ url_for('staff_reset') }}" class="row mt-1" style="gap:6px">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="name" value="{{ m.name }}">
+                <input type="text" name="email" value="{{ m.email or '' }}"
+                       placeholder="email@nlcfcpa.com" style="width:170px" required>
+                <input type="text" name="password" placeholder="new password" style="width:130px" required>
+                <button type="submit" class="btn btn-secondary btn-sm">Save</button>
+              </form>
+            </details>
           </td>
           <td>
             <form method="post" action="{{ url_for('staff_remove') }}"
                   onsubmit="return confirm('Remove {{ m.name }}?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <input type="hidden" name="name" value="{{ m.name }}">
               <button type="submit" class="btn btn-danger btn-sm">Remove</button>
             </form>

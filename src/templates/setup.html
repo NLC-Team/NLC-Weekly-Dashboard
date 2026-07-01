@@ -1,0 +1,22 @@
+{% extends "auth_base.html" %}
+{% block title %}First-time setup — NLC Financial Dashboard{% endblock %}
+{% block auth %}
+<h1>Welcome</h1>
+<p class="sub">No accounts exist yet. Create the first <strong>administrator</strong> account to
+get started — this account can then add and approve everyone else.</p>
+
+{% if error %}<div class="msg msg-err">{{ error }}</div>{% endif %}
+
+<form method="post" action="{{ url_for('setup') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label for="name">Your full name</label>
+  <input type="text" id="name" name="name" autocomplete="name" autofocus required>
+  <label for="email">Work email</label>
+  <input type="text" id="email" name="email" autocomplete="email" placeholder="you@nlcfcpa.com" required>
+  <p class="hint">Must be a @nlcfcpa.com address — you'll sign in with this.</p>
+  <label for="password">Password</label>
+  <input type="password" id="password" name="password" autocomplete="new-password" required>
+  <p class="hint">At least 8 characters. Keep it safe — this is the master admin account.</p>
+  <button type="submit" class="btn">Create admin &amp; continue</button>
+</form>
+{% endblock %}

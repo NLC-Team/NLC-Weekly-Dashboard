@@ -1,0 +1,9 @@
+{% extends "auth_base.html" %}
+{% block title %}{{ code }} — NLC Financial Dashboard{% endblock %}
+{% block auth %}
+<h1>{{ title }}</h1>
+<p class="sub">{{ message }}</p>
+<div class="auth-foot">
+  <a href="{{ url_for('overview') }}">Back to dashboard</a>
+</div>
+{% endblock %}

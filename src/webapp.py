@@ -10,11 +10,15 @@ import base64
 import io
 import logging
 import os
+import secrets
+import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import webbrowser
-from datetime import date
+from datetime import date, datetime, timedelta
+from functools import wraps
 from pathlib import Path
 
 logging.basicConfig(
@@ -29,15 +33,27 @@ import matplotlib
 matplotlib.use("Agg")
 # Chart font: Times New Roman for a classic, professional look.
 matplotlib.rcParams["font.family"] = ["Times New Roman", "Times", "serif"]
-from flask import Flask, redirect, render_template, request, session, url_for
+from flask import (Flask, abort, g, redirect, render_template, request,
+                   session, url_for)
 from matplotlib.figure import Figure
+from werkzeug.security import check_password_hash, generate_password_hash
 
 import config
+import mailer
 from data import importer, service
 from data.store import Store
 
 app = Flask(__name__)
-app.secret_key = "REDACTED-ROTATED-KEY"
+# Random key persisted per-machine (see config.get_or_create_secret_key). This
+# replaces the old hardcoded key, which made session cookies forgeable.
+app.secret_key = config.get_or_create_secret_key()
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,      # JS can't read the session cookie
+    SESSION_COOKIE_SAMESITE="Lax",     # mitigates cross-site request abuse
+    # "Keep me signed in" makes the session permanent for this long; without it
+    # the cookie is a browser-session cookie that clears when the browser closes.
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+)
 
 # ---- Global singleton store (single-user local app) ----------------------
 _store: Store | None = None
@@ -58,37 +74,248 @@ def _pending_statuses() -> list:
     return list(get_store().get_setting("pending_statuses", []))
 
 
+# ---- Identity (driven by the logged-in session user) ---------------------
+
+def _current_account() -> dict | None:
+    """The logged-in account row, or None. Cached per request on flask.g.
+    Session stores the account's display name (its stable primary key)."""
+    if not hasattr(g, "_account"):
+        name = session.get("auth_user", "")
+        acct = get_store().get_account_by_name(name) if name else None
+        # Only a fully-active account counts as logged in.
+        g._account = acct if (acct and acct["status"] == "active") else None
+    return g._account
+
+
 def _current_user() -> str:
-    return get_store().get_setting("current_user", "") or ""
+    """Logged-in display name ("" if none)."""
+    return session.get("auth_user", "") or ""
 
 
 def _current_role() -> str:
-    """Role of whoever is currently 'acting as' in the app ("" if none)."""
-    user = _current_user()
-    if not user:
-        return ""
-    for m in get_store().get_staff():
-        if m["name"] == user:
-            return m["role"]
-    return ""
+    acct = _current_account()
+    return acct["role"] if acct else ""
 
 
 def _is_admin() -> bool:
     return _current_role() == "Admin"
 
 
+def _needs_setup() -> bool:
+    """True on first run: no admin who can actually log in exists yet."""
+    return get_store().count_active_admins() == 0
+
+
+# ---- CSRF -----------------------------------------------------------------
+
+def _csrf_token() -> str:
+    """Per-session token; generated lazily and reused for the session's life."""
+    tok = session.get("csrf_token")
+    if not tok:
+        tok = secrets.token_hex(16)
+        session["csrf_token"] = tok
+    return tok
+
+
+# ---- Login throttle (in-memory, per username) ----------------------------
+
+_FAILED_LOGINS: dict[str, list[float]] = {}
+_MAX_FAILS = 5
+_FAIL_WINDOW = 900  # seconds (15 min)
+
+
+def _too_many_fails(username: str) -> bool:
+    now = time.time()
+    recent = [t for t in _FAILED_LOGINS.get(username, []) if now - t < _FAIL_WINDOW]
+    _FAILED_LOGINS[username] = recent
+    return len(recent) >= _MAX_FAILS
+
+
+def _record_fail(username: str) -> None:
+    _FAILED_LOGINS.setdefault(username, []).append(time.time())
+
+
+def _clear_fails(username: str) -> None:
+    _FAILED_LOGINS.pop(username, None)
+
+
+def _valid_password(pw) -> bool:
+    return isinstance(pw, str) and len(pw) >= 8
+
+
+def _valid_username(u) -> bool:
+    """3-30 chars, letters/digits/._- only (so it's clearly not an email)."""
+    import re
+    return bool(isinstance(u, str) and re.fullmatch(r"[A-Za-z0-9._-]{3,30}", u))
+
+
+def _hash_password(pw: str) -> str:
+    # pbkdf2:sha256 is available on every CPython build; scrypt (the Werkzeug
+    # default) can be absent, and account hashes are shared across machines.
+    return generate_password_hash(pw, method="pbkdf2:sha256")
+
+
+# ---- Email verification helpers ------------------------------------------
+
+VERIFY_TTL_HOURS = 24
+
+
+def _new_code() -> str:
+    """A 6-digit verification code (entered on the verify screen)."""
+    return f"{secrets.randbelow(1000000):06d}"
+
+
+def _code_expired(sent_at: str | None) -> bool:
+    if not sent_at:
+        return True
+    try:
+        return datetime.now() - datetime.fromisoformat(sent_at) > timedelta(hours=VERIFY_TTL_HOURS)
+    except ValueError:
+        return True
+
+
+def _mail_config() -> dict:
+    return mailer.merged_config(get_store().get_setting("mail_config", {}))
+
+
+def _send_verification(acct: dict) -> tuple[bool, str]:
+    """Generate + store a fresh code for `acct` and email it. Returns (ok, err)."""
+    code = _new_code()
+    get_store().set_verify_code(acct["name"], code, datetime.now().isoformat(timespec="seconds"))
+    return mailer.send_verification_code(_mail_config(), acct["email"], acct["name"], code)
+
+
+def _safe_next(target: str) -> str:
+    """Only allow same-site relative redirects (block open-redirects)."""
+    if target and target.startswith("/") and not target.startswith("//"):
+        return target
+    return url_for("overview")
+
+
 @app.context_processor
 def _inject_user():
-    """Make the current user/role and staff list available to every template."""
+    """Make the current user/role, staff list and CSRF token available to
+    every template (all now driven by the logged-in session user)."""
+    acct = _current_account()
     return {
-        "current_user": _current_user(),
-        "current_role": _current_role(),
+        "current_user": acct["name"] if acct else "",
+        "current_username": acct["username"] if acct else "",
+        "current_role": acct["role"] if acct else "",
         "all_staff": get_store().get_staff(),
+        "csrf_token": _csrf_token(),
     }
 
 
+# ---- Access decorators ----------------------------------------------------
+
+def login_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not _current_account():
+            return redirect(url_for("login", next=request.path))
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def admin_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        acct = _current_account()
+        if not acct:
+            return redirect(url_for("login", next=request.path))
+        if acct["role"] != "Admin":
+            abort(403)
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def manager_required(fn):
+    """Manager or Admin — allowed to change document/project state."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        acct = _current_account()
+        if not acct:
+            return redirect(url_for("login", next=request.path))
+        if acct["role"] not in ("Admin", "Manager"):
+            abort(403)
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+# ---- Global request gate: CSRF + authentication ---------------------------
+
+_PUBLIC_ENDPOINTS = {"login", "signup", "logout", "setup", "verify", "static"}
+
+
+@app.before_request
+def _auth_gate():
+    ep = request.endpoint
+
+    # 1) CSRF: every state-changing POST must carry the session token. Checked
+    #    first so even unauthenticated POSTs (login/signup/setup) are covered.
+    if request.method == "POST":
+        token = request.form.get("csrf_token", "")
+        if not token or token != session.get("csrf_token"):
+            abort(400, description="Invalid or missing CSRF token. Reload the page and try again.")
+
+    if ep == "static" or ep is None:
+        return
+
+    # 2) First run: with no admin yet, funnel everyone to the setup screen.
+    if _needs_setup():
+        if ep != "setup":
+            return redirect(url_for("setup"))
+        return
+
+    # 3) Public auth pages need no login. Once an admin exists, setup is closed.
+    if ep in _PUBLIC_ENDPOINTS:
+        if ep == "setup":
+            return redirect(url_for("login"))
+        return
+
+    # 4) Everything else requires a valid, still-existing, active account.
+    if not _current_account():
+        session.pop("auth_user", None)
+        return redirect(url_for("login", next=request.path))
+
+
+@app.errorhandler(403)
+def _forbidden(_e):
+    return render_template("error.html",
+                           code=403, title="Not allowed",
+                           message="Your account doesn't have permission to view that page."), 403
+
+
+@app.errorhandler(400)
+def _bad_request(e):
+    desc = getattr(e, "description", "Bad request.")
+    return render_template("error.html", code=400, title="Bad request", message=desc), 400
+
+
+# ---- Dashboard data + chart cache ----------------------------------------
+# service.dashboard_data() pulls every active item and recomputes all aggregates
+# on each call; the workload chart re-renders a PNG. Both only change when the
+# store's data_version moves (an import or edit), the day rolls over, or the
+# overdue threshold changes. Cache on that composite key so repeated page loads
+# are served from memory. The lock also collapses a burst of concurrent requests
+# into a single recompute rather than letting all 8 Waitress threads redo it.
+_cache_lock = threading.Lock()
+_data_cache: dict = {"key": None, "data": None}
+_chart_cache: dict = {"key": None, "img": None}
+
+
+def _cache_key() -> tuple:
+    return (get_store().data_version, date.today().isoformat(), _overdue_days())
+
+
 def _get_data() -> dict:
-    return service.dashboard_data(get_store(), date.today(), _overdue_days())
+    key = _cache_key()
+    with _cache_lock:
+        if _data_cache["key"] != key:
+            _data_cache["data"] = service.dashboard_data(
+                get_store(), date.today(), _overdue_days())
+            _data_cache["key"] = key
+        return _data_cache["data"]
 
 
 def _known_statuses() -> list[str]:
@@ -96,6 +323,17 @@ def _known_statuses() -> list[str]:
         "SELECT DISTINCT last_status FROM items WHERE last_status != '' ORDER BY last_status"
     ).fetchall()
     return [r[0] for r in rows]
+
+
+def _group_statuses(statuses: list[str]) -> list[tuple[str, list[str]]]:
+    """Group statuses by the category before ' - ' (e.g. 'Waiting', 'In Progress')
+    so the settings screen shows a few collapsible groups instead of one long
+    flat wall of checkboxes."""
+    groups: dict[str, list[str]] = {}
+    for s in statuses:
+        grp = s.split(" - ", 1)[0].strip() if " - " in s else s
+        groups.setdefault(grp, []).append(s)
+    return [(g, sorted(m)) for g, m in sorted(groups.items(), key=lambda kv: kv[0].lower())]
 
 
 # ---- Chart helpers -------------------------------------------------------
@@ -126,63 +364,44 @@ def _workload_chart(per_assignee: list) -> str | None:
         if not top:
             return None
 
-        # First name + last initial (e.g. "Sarah K.")
-        def _short(name: str) -> str:
-            parts = name.strip().split()
-            if len(parts) >= 2:
-                return f"{parts[0]} {parts[-1][0]}."
-            return parts[0] if parts else name
+        # Most overdue staff on the left — that's who needs attention first.
+        ordered = sorted(top, key=lambda r: (r["overdue_count"], r["pending_count"]), reverse=True)
 
-        # Sort highest workload to smallest. Horizontal bars read top-to-bottom,
-        # so reverse the list to put the busiest staff member at the top.
-        ordered = sorted(top, key=lambda r: r["pending_count"], reverse=True)
-        ordered = list(reversed(ordered))  # matplotlib draws y=0 at the bottom
-
-        labels = [_short(r["assignee"]) for r in ordered]
+        labels = [r["assignee"] for r in ordered]  # full names, no truncation
         pending = [r["pending_count"] for r in ordered]
         overdue = [r["overdue_count"] for r in ordered]
         n = len(labels)
-        y = list(range(n))
-        h = 0.30  # bar thickness
+        x = list(range(n))
+        w = 0.38  # each column; O left, P right within each group
 
-        fig = Figure(figsize=(5.8, 3.4), facecolor="white")
+        # Width scales with the number of staff so columns stay readable.
+        fig_w = max(6.0, n * 0.95)
+        fig = Figure(figsize=(fig_w, 4.2), facecolor="white")
         ax = fig.add_subplot(111)
 
-        # Refined, professional palette: deep navy + restrained crimson.
-        bars_p = ax.barh([yi + h / 2 for yi in y], pending,
-                         height=h, label="Pending", color="#1e3a5f", zorder=3, linewidth=0)
-        bars_o = ax.barh([yi - h / 2 for yi in y], overdue,
-                         height=h, label="Overdue", color="#9d2235", zorder=3, linewidth=0)
+        # Charcoal for O (overdue, left), amber for P (pending, right).
+        bars_o = ax.bar([xi - w / 2 for xi in x], overdue, width=w,
+                        label="Overdue", color="#374151", zorder=3, linewidth=0)
+        bars_p = ax.bar([xi + w / 2 for xi in x], pending, width=w,
+                        label="Pending", color="#d97706", zorder=3, linewidth=0)
 
-        # Value labels at the end of each bar
-        xmax = max(pending + overdue + [1])
-        for bar in list(bars_p) + list(bars_o):
-            w = bar.get_width()
-            if w > 0:
-                ax.text(w + xmax * 0.015, bar.get_y() + bar.get_height() / 2, str(int(w)),
-                        ha="left", va="center", fontsize=10, color="#1f2937")
+        # Value labels on top of each column; skip zeros to keep it clean.
+        ymax = max(pending + overdue + [1])
+        for bar in list(bars_o) + list(bars_p):
+            h = bar.get_height()
+            if h > 0:
+                ax.text(bar.get_x() + bar.get_width() / 2, h + ymax * 0.02, str(int(h)),
+                        ha="center", va="bottom", fontsize=9, fontweight="700", color="#0f1923")
 
-        ax.set_yticks(y)
-        ax.set_yticklabels(labels, fontsize=11, color="#0f1923")
-        ax.set_ylim(-0.6, n - 0.4)
-        ax.set_xlim(0, xmax * 1.12)  # headroom for value labels
+        # Full names rotated so they never overlap regardless of staff count.
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=35, ha="right", fontsize=10, fontweight="600")
+        ax.set_ylim(0, ymax * 1.18)
+        _style_ax(ax, "Staff Workload Summary")
+        ax.legend(fontsize=10, frameon=False, loc="upper right",
+                  ncol=2, handlelength=1.0, handletextpad=0.4, columnspacing=1.2)
 
-        # Classic, restrained styling to suit the serif typeface.
-        ax.set_title("Staff Workload Summary", fontsize=16, color="#0f1923",
-                     pad=14, loc="left")
-        ax.spines[["top", "right", "bottom"]].set_visible(False)
-        ax.spines["left"].set_color("#9ca3af")
-        ax.spines["left"].set_linewidth(1.0)
-        ax.tick_params(axis="both", colors="#1f2937", length=0)
-        ax.xaxis.grid(True, color="#e5e7eb", linewidth=0.6, zorder=0)
-        ax.set_axisbelow(True)
-        ax.set_facecolor("white")
-        ax.xaxis.set_visible(False)
-
-        legend = ax.legend(fontsize=11, frameon=False, loc="lower right",
-                           ncol=2, handlelength=1.1, handletextpad=0.5, columnspacing=1.0)
-
-        fig.tight_layout(pad=1.2)
+        fig.tight_layout(pad=1.6)
         return _fig_to_b64(fig)
     except Exception:
         logging.exception("workload chart failed")
@@ -215,7 +434,217 @@ def _age_chart(age_distribution: list) -> str | None:
 
 # ---- Routes --------------------------------------------------------------
 
+def _workload_chart_cached(per_assignee: list) -> str | None:
+    """Workload PNG for the current data, rendered at most once per data change."""
+    key = _cache_key()
+    with _cache_lock:
+        if _chart_cache["key"] != key:
+            _chart_cache["img"] = _workload_chart(per_assignee)
+            _chart_cache["key"] = key
+        return _chart_cache["img"]
+
+
+# ---- Authentication routes -----------------------------------------------
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup():
+    """First-run bootstrap: create the very first Admin. Reachable only while
+    no active admin exists; closed off (redirects to login) afterwards. The
+    first admin is auto-verified/active so they can then configure email."""
+    if not _needs_setup():
+        return redirect(url_for("login"))
+    error = ""
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        if not name or not email:
+            error = "Please enter your name and email."
+        elif not config.is_allowed_email(email):
+            error = f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address."
+        elif not _valid_password(password):
+            error = "Password must be at least 8 characters."
+        else:
+            try:
+                get_store().create_account(name, "Admin", _hash_password(password), "active",
+                                           email=email, email_verified=1, today=date.today())
+                session.clear()
+                session["auth_user"] = name
+                session.permanent = True
+                return redirect(url_for("overview"))
+            except sqlite3.IntegrityError:
+                error = "That name or email is already in use."
+    return render_template("setup.html", error=error)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if _current_account():
+        return redirect(url_for("overview"))
+    error = ""
+    unverified_email = ""
+    if request.method == "POST":
+        login_id = request.form.get("email", "").strip()
+        password = request.form.get("password", "")
+        if _too_many_fails(login_id.lower()):
+            error = "Too many failed attempts. Please wait a few minutes and try again."
+        else:
+            acct = get_store().get_account_by_login(login_id)
+            pw_ok = bool(acct and acct["password_hash"]
+                         and check_password_hash(acct["password_hash"], password))
+            if not pw_ok:
+                _record_fail(login_id.lower())
+                error = "Invalid email/username or password."  # generic: no user enumeration
+            elif not acct["email_verified"]:
+                # Password is right, so it's safe to be specific and helpful here.
+                unverified_email = acct["email"] or ""
+                error = "Your email isn't verified yet. Please verify it to continue."
+            elif acct["status"] != "active":
+                error = "Your account is awaiting administrator approval."
+            else:
+                _clear_fails(login_id.lower())
+                remember = request.form.get("remember") == "on"
+                session.clear()  # fresh session on login (prevents fixation)
+                session["auth_user"] = acct["name"]
+                # Keep me signed in: permanent cookie (30 days). Otherwise a
+                # browser-session cookie that clears when the browser closes.
+                session.permanent = remember
+                return redirect(_safe_next(request.args.get("next", "")))
+    return render_template("login.html", error=error, unverified_email=unverified_email)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    """Self sign-up: company-domain email + password creates a PENDING,
+    UNVERIFIED account and emails a verification code. The user verifies, then
+    an admin approves, before they can sign in."""
+    if _current_account():
+        return redirect(url_for("overview"))
+    error = ""
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        if not name or not email or not username:
+            error = "Please enter your name, email and a username."
+        elif not config.is_allowed_email(email):
+            error = f"Access is limited to @{config.ALLOWED_EMAIL_DOMAIN} email addresses."
+        elif not _valid_username(username):
+            error = "Username must be 3-30 characters: letters, numbers, dot, underscore or hyphen."
+        elif not _valid_password(password):
+            error = "Password must be at least 8 characters."
+        elif get_store().get_account_by_email(email):
+            error = "An account with that email already exists."
+        elif get_store().get_account_by_username(username):
+            error = "That username is already taken."
+        else:
+            try:
+                get_store().create_account(name, "Viewer", _hash_password(password), "pending",
+                                           email=email, username=username,
+                                           email_verified=0, today=date.today())
+            except sqlite3.IntegrityError:
+                return render_template("signup.html",
+                                       error="That name, username or email is already in use.")
+            acct = get_store().get_account_by_email(email)
+            ok, err = _send_verification(acct)
+            # Either way the account exists; send them to the verify screen.
+            return redirect(url_for("verify", email=email, sent=("1" if ok else "0"),
+                                    err=("" if ok else err)))
+    return render_template("signup.html", error=error)
+
+
+@app.route("/verify", methods=["GET", "POST"])
+def verify():
+    """Confirm ownership of the email by entering the 6-digit code we sent."""
+    if _current_account():
+        return redirect(url_for("overview"))
+    email = (request.values.get("email", "") or "").strip().lower()
+    error = ""
+    info = ""
+    done = False
+
+    if request.args.get("sent") == "1":
+        info = "We emailed you a 6-digit verification code. Enter it below."
+    elif request.args.get("sent") == "0":
+        error = ("We couldn't send the verification email. "
+                 + (request.args.get("err", "") or "Ask an administrator to check mail settings."))
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        acct = get_store().get_account_by_email(email)
+        if request.form.get("action") == "resend":
+            if acct and not acct["email_verified"]:
+                ok, err = _send_verification(acct)
+                info = "A new code has been sent." if ok else ""
+                error = "" if ok else ("Couldn't resend: " + err)
+            else:
+                error = "Nothing to resend for that email."
+        else:
+            code = request.form.get("code", "").strip()
+            if not acct:
+                error = "No pending account for that email."
+            elif acct["email_verified"]:
+                done = True
+                info = "This email is already verified."
+            elif _code_expired(acct["verify_sent_at"]):
+                error = "That code has expired. Request a new one below."
+            elif not acct["verify_code"] or code != acct["verify_code"]:
+                error = "That code is incorrect."
+            else:
+                get_store().mark_email_verified(acct["name"])
+                done = True
+    return render_template("verify.html", email=email, error=error, info=info, done=done)
+
+
+@app.route("/account/password", methods=["GET", "POST"])
+@login_required
+def account_password():
+    acct = _current_account()
+    error = ""
+    msg = ""
+    if request.method == "POST":
+        # Optional: set/update the email used to sign in.
+        new_email = request.form.get("email", "").strip().lower()
+        if new_email and new_email != (acct["email"] or "").lower():
+            if not config.is_allowed_email(new_email):
+                error = f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address."
+            else:
+                other = get_store().get_account_by_email(new_email)
+                if other and other["name"] != acct["name"]:
+                    error = "That email is already used by another account."
+                else:
+                    get_store().set_email(acct["name"], new_email)
+                    msg = "Email updated."
+                    acct = _current_account()
+
+        # Password change (only if the fields were filled in).
+        current = request.form.get("current", "")
+        new = request.form.get("new", "")
+        confirm = request.form.get("confirm", "")
+        if not error and (current or new or confirm):
+            if not acct["password_hash"] or not check_password_hash(acct["password_hash"], current):
+                error = "Your current password is incorrect."
+            elif not _valid_password(new):
+                error = "New password must be at least 8 characters."
+            elif new != confirm:
+                error = "The new passwords don't match."
+            else:
+                get_store().set_password(acct["name"], _hash_password(new))
+                msg = (msg + " Password updated.").strip()
+    return render_template("account_password.html", error=error, msg=msg, acct=_current_account())
+
+
+# ---- Dashboard routes -----------------------------------------------------
+
 @app.route("/")
+@login_required
 def overview():
     data = _get_data()
     li = get_store().last_import()
@@ -225,12 +654,13 @@ def overview():
                            data=data,
                            last_import=li,
                            overdue_days=_overdue_days(),
-                           workload_img=_workload_chart(data["per_assignee"]),
+                           workload_img=_workload_chart_cached(data["per_assignee"]),
                            age_dist=age_dist,
                            max_age_count=max_age_count)
 
 
 @app.route("/person")
+@login_required
 def person():
     data = _get_data()
     names = sorted({it["assignee"] for it in data["items"]})
@@ -250,6 +680,7 @@ def person():
 
 
 @app.route("/projects")
+@login_required
 def projects():
     data = _get_data()
     ft = request.args.get("filter", "All")
@@ -281,6 +712,7 @@ def projects():
 
 
 @app.route("/projects/doc", methods=["POST"])
+@manager_required
 def project_doc():
     get_store().set_received(
         request.form["item_key"],
@@ -291,6 +723,7 @@ def project_doc():
 
 
 @app.route("/projects/type", methods=["POST"])
+@manager_required
 def project_type():
     get_store().set_project_type(request.form["pkey"], request.form["return_type"])
     return redirect(url_for("projects",
@@ -300,6 +733,7 @@ def project_type():
 
 
 @app.route("/projects/complete", methods=["POST"])
+@manager_required
 def project_complete():
     pkey = request.form["pkey"]
     data = _get_data()
@@ -316,6 +750,7 @@ def project_complete():
 
 
 @app.route("/projects/delete", methods=["POST"])
+@admin_required
 def project_delete():
     pkey = request.form["pkey"]
     data = _get_data()
@@ -329,28 +764,27 @@ def project_delete():
 
 
 @app.route("/overdue")
+@login_required
 def overdue():
     data = _get_data()
     by_person: dict[str, list] = {}
     for it in data["overdue"]:
         by_person.setdefault(it["assignee"], []).append(it)
-    ranked = sorted(by_person.items(), key=lambda kv: len(kv[1]), reverse=True)
-    worst = {person: max(items, key=lambda x: x["age_days"])
-             for person, items in ranked}
+    # Alphabetical by staff member; each person's items worst-first.
+    ranked = sorted(
+        ((person, sorted(items, key=lambda x: x["age_days"], reverse=True))
+         for person, items in by_person.items()),
+        key=lambda kv: kv[0].lower(),
+    )
+    worst = {person: items[0] for person, items in ranked}
     return render_template("overdue.html",
                            overdue_items=data["overdue"],
                            overdue_days=_overdue_days(),
                            ranked=ranked, worst=worst)
 
 
-@app.route("/whoami", methods=["POST"])
-def whoami():
-    """Set who is currently 'acting as' in the app (drives admin gating)."""
-    get_store().set_setting("current_user", request.form.get("user", ""))
-    return redirect(request.referrer or url_for("overview"))
-
-
 @app.route("/clients")
+@admin_required
 def clients():
     """Admin-only bulk client deletion page."""
     allowed = _is_admin()
@@ -363,9 +797,8 @@ def clients():
 
 
 @app.route("/clients/delete", methods=["POST"])
+@admin_required
 def clients_delete():
-    if not _is_admin():
-        return redirect(url_for("clients"))
     keys = request.form.getlist("pkey")
     data = _get_data()
     by_key = {p["project_key"]: p for p in data["projects"]}
@@ -380,52 +813,182 @@ def clients_delete():
 
 
 @app.route("/staff")
+@admin_required
 def staff():
     return render_template("staff.html",
                            members=get_store().get_staff(),
+                           pending=get_store().list_pending(),
                            msg=request.args.get("msg", ""),
                            msg_type=request.args.get("mt", "ok"))
 
 
 @app.route("/staff/add", methods=["POST"])
+@admin_required
 def staff_add():
+    """Admin adds a member directly. Admin-created accounts are active and
+    email-verified immediately (the admin vouches for them)."""
     name = request.form.get("name", "").strip()
+    email = request.form.get("email", "").strip().lower()
+    password = request.form.get("password", "")
     role = request.form.get("role", "Viewer")
-    if name:
-        get_store().upsert_staff(name, role, date.today())
-        return redirect(url_for("staff", msg=f"{name} added as {role}.", mt="ok"))
-    return redirect(url_for("staff", msg="Please enter a name.", mt="err"))
+    if not name or not email:
+        return redirect(url_for("staff", msg="Name and email are both required.", mt="err"))
+    if not config.is_allowed_email(email):
+        return redirect(url_for("staff",
+                                msg=f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address.", mt="err"))
+    if not _valid_password(password):
+        return redirect(url_for("staff", msg="Password must be at least 8 characters.", mt="err"))
+    try:
+        get_store().create_account(name, role, _hash_password(password), "active",
+                                   email=email, email_verified=1, today=date.today())
+    except sqlite3.IntegrityError:
+        return redirect(url_for("staff", msg="That name or email is already in use.", mt="err"))
+    return redirect(url_for("staff", msg=f"{name} added as {role}.", mt="ok"))
 
 
 @app.route("/staff/remove", methods=["POST"])
+@admin_required
 def staff_remove():
     name = request.form.get("name", "")
+    target = next((m for m in get_store().get_staff() if m["name"] == name), None)
+    if (target and target["role"] == "Admin" and target["has_login"]
+            and get_store().count_active_admins() <= 1):
+        return redirect(url_for("staff", msg="You can't remove the last admin.", mt="err"))
     if name:
         get_store().remove_staff(name)
+        return redirect(url_for("staff", msg=f"{name} removed.", mt="ok"))
     return redirect(url_for("staff"))
 
 
 @app.route("/staff/role", methods=["POST"])
+@admin_required
 def staff_role():
     name = request.form.get("name", "")
     role = request.form.get("role", "Viewer")
+    target = next((m for m in get_store().get_staff() if m["name"] == name), None)
+    if (target and target["role"] == "Admin" and role != "Admin" and target["has_login"]
+            and get_store().count_active_admins() <= 1):
+        return redirect(url_for("staff", msg="You can't demote the last admin.", mt="err"))
     if name:
         get_store().upsert_staff(name, role, date.today())
         return redirect(url_for("staff", msg=f"{name} updated to {role}.", mt="ok"))
     return redirect(url_for("staff"))
 
 
+@app.route("/staff/reset", methods=["POST"])
+@admin_required
+def staff_reset():
+    """Set or reset a member's login (email + password), keyed by name."""
+    name = request.form.get("name", "")
+    email = request.form.get("email", "").strip().lower()
+    password = request.form.get("password", "")
+    if not name or not email:
+        return redirect(url_for("staff", msg="Name and email are required.", mt="err"))
+    if not config.is_allowed_email(email):
+        return redirect(url_for("staff",
+                                msg=f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address.", mt="err"))
+    if not _valid_password(password):
+        return redirect(url_for("staff", msg="Password must be at least 8 characters.", mt="err"))
+    other = get_store().get_account_by_email(email)
+    if other and other["name"] != name:
+        return redirect(url_for("staff", msg="That email is used by another account.", mt="err"))
+    try:
+        get_store().set_login(name, email, _hash_password(password))
+    except sqlite3.IntegrityError:
+        return redirect(url_for("staff", msg="That email is already in use.", mt="err"))
+    return redirect(url_for("staff", msg=f"Login updated for {name}.", mt="ok"))
+
+
+@app.route("/staff/approve", methods=["POST"])
+@admin_required
+def staff_approve():
+    name = request.form.get("name", "")
+    role = request.form.get("role", "Viewer")
+    if role not in ("Viewer", "Manager", "Admin"):
+        role = "Viewer"
+    if name:
+        get_store().approve_account(name, role)
+        return redirect(url_for("staff", msg=f"Account approved as {role}.", mt="ok"))
+    return redirect(url_for("staff"))
+
+
+@app.route("/staff/reject", methods=["POST"])
+@admin_required
+def staff_reject():
+    name = request.form.get("name", "")
+    if name:
+        get_store().remove_staff(name)
+        return redirect(url_for("staff", msg="Sign-up request rejected.", mt="ok"))
+    return redirect(url_for("staff"))
+
+
+@app.route("/staff/resend", methods=["POST"])
+@admin_required
+def staff_resend():
+    """Admin re-sends a verification code to a pending, unverified account."""
+    name = request.form.get("name", "")
+    acct = get_store().get_account_by_name(name)
+    if not acct or acct["email_verified"] or not acct["email"]:
+        return redirect(url_for("staff", msg="Nothing to resend for that account.", mt="err"))
+    ok, err = _send_verification(acct)
+    if ok:
+        return redirect(url_for("staff", msg=f"Verification code re-sent to {acct['email']}.", mt="ok"))
+    return redirect(url_for("staff", msg=f"Couldn't send: {err}", mt="err"))
+
+
 @app.route("/settings")
+@admin_required
 def settings():
+    mc = _mail_config()
     return render_template("settings.html",
                            overdue_days=_overdue_days(),
                            pending_statuses=_pending_statuses(),
-                           known_statuses=_known_statuses(),
+                           status_groups=_group_statuses(_known_statuses()),
                            db_path=str(get_store().db_path),
-                           msg=request.args.get("msg", ""))
+                           mail={"host": mc["host"], "port": mc["port"], "sender": mc["sender"],
+                                 "username": mc["username"], "use_tls": mc["use_tls"],
+                                 "has_password": bool(mc["password"]),
+                                 "configured": mailer.is_configured(mc)},
+                           my_email=(_current_account() or {}).get("email") or "",
+                           msg=request.args.get("msg", ""),
+                           msg_type=request.args.get("mt", "ok"))
+
+
+@app.route("/settings/mail", methods=["POST"])
+@admin_required
+def settings_mail():
+    """Save SMTP settings. The password is write-only: a blank field keeps the
+    stored one, so it's never echoed back to the page."""
+    saved = dict(get_store().get_setting("mail_config", {}) or {})
+    saved["host"] = request.form.get("host", "").strip() or "smtp.office365.com"
+    try:
+        saved["port"] = int(request.form.get("port", "587") or 587)
+    except ValueError:
+        saved["port"] = 587
+    saved["sender"] = request.form.get("sender", "").strip()
+    saved["username"] = request.form.get("username", "").strip()
+    saved["use_tls"] = request.form.get("use_tls") == "on"
+    pw = request.form.get("password", "")
+    if pw:
+        saved["password"] = pw
+    get_store().set_setting("mail_config", saved)
+    return redirect(url_for("settings", msg="Mail settings saved."))
+
+
+@app.route("/settings/mail/test", methods=["POST"])
+@admin_required
+def settings_mail_test():
+    to = request.form.get("to", "").strip() or (_current_account() or {}).get("email") or ""
+    if not to:
+        return redirect(url_for("settings", msg="Enter a recipient address for the test.", mt="err"))
+    ok, err = mailer.send_test(_mail_config(), to)
+    if ok:
+        return redirect(url_for("settings", msg=f"Test email sent to {to}.", mt="ok"))
+    return redirect(url_for("settings", msg=f"Test failed: {err}", mt="err"))
 
 
 @app.route("/settings/days", methods=["POST"])
+@admin_required
 def settings_days():
     try:
         days = max(1, int(request.form["days"]))
@@ -436,6 +999,7 @@ def settings_days():
 
 
 @app.route("/settings/statuses", methods=["POST"])
+@admin_required
 def settings_statuses():
     statuses = request.form.getlist("statuses")
     get_store().set_setting("pending_statuses", statuses)
@@ -445,6 +1009,7 @@ def settings_statuses():
 # ---- Import flow ---------------------------------------------------------
 
 @app.route("/import", methods=["GET"])
+@admin_required
 def import_view():
     step = session.get("import_step", 0)
     ctx = session.get("import_ctx", {})
@@ -455,6 +1020,7 @@ def import_view():
 
 
 @app.route("/import/upload", methods=["POST"])
+@admin_required
 def import_upload():
     f = request.files.get("csv_file")
     if not f or not f.filename:
@@ -505,6 +1071,7 @@ def import_upload():
 
 
 @app.route("/import/run", methods=["POST"])
+@admin_required
 def import_run():
     ctx = session.get("import_ctx", {})
     tmp_path = ctx.get("tmp_path", "")
@@ -542,6 +1109,7 @@ def import_run():
 
 
 @app.route("/import/cancel")
+@admin_required
 def import_cancel():
     ctx = session.pop("import_ctx", {})
     session.pop("import_step", None)

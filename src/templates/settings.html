@@ -3,13 +3,14 @@
 <h1>Settings</h1>
 <p class="subtitle">Dashboard configuration and data options.</p>
 
-{% if msg %}<div class="msg msg-ok">{{ msg }}</div>{% endif %}
+{% if msg %}<div class="msg {{ 'msg-ok' if msg_type == 'ok' else 'msg-err' }}">{{ msg }}</div>{% endif %}
 
 <!-- Overdue threshold -->
 <div class="card mb-2">
   <div class="card-title">Overdue threshold</div>
   <p class="text-muted mb-1" style="font-size:12px">Flag a document as overdue once it has been open more than this many days.</p>
   <form method="post" action="{{ url_for('settings_days') }}" class="row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="number" name="days" value="{{ overdue_days }}" min="1" max="365" style="width:80px">
     <span style="font-size:12px;color:var(--muted)">days</span>
     <button type="submit" class="btn btn-primary btn-sm">Apply</button>
@@ -20,26 +21,138 @@
 <div class="card mb-2">
   <div class="card-title">Pending statuses</div>
   <p class="text-muted mb-1" style="font-size:12px">
-    Check the statuses that count as "still pending". Only rows with these statuses are included in the dashboard.
-    Leave all unchecked to treat every row as pending.
+    Choose which statuses count as "still pending". They're grouped by category —
+    tick a whole group, or click a group to fine-tune the ones inside it.
+    Leave everything unchecked to treat every row as pending.
   </p>
-  {% if known_statuses %}
+  {% if status_groups %}
   <form method="post" action="{{ url_for('settings_statuses') }}">
-    <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:12px">
-      {% for s in known_statuses %}
-      <label style="display:flex;align-items:center;gap:9px;text-transform:none;font-size:12px;font-weight:400;letter-spacing:0;cursor:pointer">
-        <input type="checkbox" name="statuses" value="{{ s }}"
-               {{ 'checked' if s in pending_statuses }}
-               style="width:15px;height:15px;accent-color:var(--accent)">
-        {{ s }}
-      </label>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="row mb-1" style="gap:8px">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="setAllStatuses(true)">Select all</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="setAllStatuses(false)">Clear all</button>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
+      {% for group, members in status_groups %}
+        {% if members|length == 1 and members[0] == group %}
+        <!-- Standalone status (no sub-categories) -->
+        <label style="display:flex;align-items:center;gap:9px;border:1px solid var(--border);border-radius:8px;
+                      padding:9px 11px;font-size:12.5px;font-weight:600;text-transform:none;letter-spacing:0;cursor:pointer">
+          <input type="checkbox" class="status-cb" name="statuses" value="{{ group }}"
+                 {{ 'checked' if group in pending_statuses }}
+                 style="width:15px;height:15px;accent-color:var(--accent)">
+          {{ group }}
+        </label>
+        {% else %}
+        <!-- Category group: master checkbox + collapsible sub-statuses -->
+        <div class="status-group" style="border:1px solid var(--border);border-radius:8px;padding:9px 11px">
+          <div style="display:flex;align-items:center;gap:9px">
+            <input type="checkbox" class="group-master" onchange="toggleGroup(this)"
+                   style="width:16px;height:16px;accent-color:var(--accent)">
+            <details style="flex:1">
+              <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:var(--text)">
+                {{ group }} <span class="text-muted grp-count" style="font-weight:600;font-size:11px"></span>
+              </summary>
+              <div style="display:flex;flex-direction:column;gap:6px;padding:9px 0 2px 4px">
+                {% for s in members %}
+                <label style="display:flex;align-items:center;gap:9px;font-size:12px;font-weight:400;
+                              text-transform:none;letter-spacing:0;cursor:pointer">
+                  <input type="checkbox" class="status-cb" name="statuses" value="{{ s }}"
+                         {{ 'checked' if s in pending_statuses }}
+                         style="width:14px;height:14px;accent-color:var(--accent)">
+                  {% if s.startswith(group ~ ' - ') %}{{ s[group|length + 3:] }}{% else %}{{ s }}{% endif %}
+                </label>
+                {% endfor %}
+              </div>
+            </details>
+          </div>
+        </div>
+        {% endif %}
       {% endfor %}
     </div>
+
     <button type="submit" class="btn btn-primary btn-sm">Save statuses</button>
   </form>
+
+  <script>
+  function syncMasters() {
+    document.querySelectorAll('.status-group').forEach(function (grp) {
+      var master = grp.querySelector('.group-master');
+      var kids = grp.querySelectorAll('.status-cb');
+      var checked = 0;
+      kids.forEach(function (c) { if (c.checked) checked++; });
+      master.checked = kids.length > 0 && checked === kids.length;
+      master.indeterminate = checked > 0 && checked < kids.length;
+      var cnt = grp.querySelector('.grp-count');
+      if (cnt) cnt.textContent = '(' + checked + ' of ' + kids.length + ')';
+    });
+  }
+  function toggleGroup(master) {
+    master.closest('.status-group').querySelectorAll('.status-cb')
+      .forEach(function (c) { c.checked = master.checked; });
+    syncMasters();
+  }
+  function setAllStatuses(state) {
+    document.querySelectorAll('.status-cb').forEach(function (c) { c.checked = state; });
+    syncMasters();
+  }
+  document.querySelectorAll('.status-cb').forEach(function (c) {
+    c.addEventListener('change', syncMasters);
+  });
+  syncMasters();
+  </script>
   {% else %}
   <p class="text-muted" style="font-size:12px">Import a CSV first to see available statuses here.</p>
   {% endif %}
+</div>
+
+<!-- Email / verification (SMTP) -->
+<div class="card mb-2">
+  <div class="card-title">Email (sign-up verification)</div>
+  <p class="text-muted mb-1" style="font-size:12px">
+    Sends the 6-digit verification codes for new sign-ups.
+    Status:
+    {% if mail.configured %}<span class="text-ok" style="font-weight:700">configured</span>
+    {% else %}<span class="text-danger" style="font-weight:700">not configured</span>{% endif %}
+  </p>
+  <p class="text-muted mb-1" style="font-size:11.5px;background:var(--bg);border-radius:8px;padding:9px 11px">
+    <strong>No app password required.</strong> Two ways to set this up:<br>
+    • <strong>Direct send (no login):</strong> leave Username &amp; Password blank. Set host to your
+      Microsoft 365 relay, e.g. <span class="monospace">nlcfcpa-com.mail.protection.outlook.com</span>,
+      port <strong>25</strong>, STARTTLS off. Delivers to @nlcfcpa.com inboxes without any password.<br>
+    • <strong>Signed-in:</strong> enter a mailbox + its password (host <span class="monospace">smtp.office365.com</span>, port 587).
+  </p>
+  <form method="post" action="{{ url_for('settings_mail') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="map-grid mb-2" style="grid-template-columns:170px 1fr;max-width:560px">
+      <label style="margin:0">SMTP host</label>
+      <input type="text" name="host" value="{{ mail.host }}">
+      <label style="margin:0">Port</label>
+      <input type="number" name="port" value="{{ mail.port }}" style="width:110px">
+      <label style="margin:0">From address</label>
+      <input type="text" name="sender" value="{{ mail.sender }}" placeholder="dashboard@nlcfcpa.com">
+      <label style="margin:0">Username <span class="text-muted" style="font-weight:400">(optional)</span></label>
+      <input type="text" name="username" value="{{ mail.username }}" placeholder="blank = send without signing in">
+      <label style="margin:0">Password <span class="text-muted" style="font-weight:400">(optional)</span></label>
+      <input type="password" name="password" autocomplete="new-password"
+             placeholder="{{ '•••••• saved — leave blank to keep' if mail.has_password else 'blank = no login needed' }}">
+      <label style="margin:0">Use STARTTLS</label>
+      <div><input type="checkbox" name="use_tls" {{ 'checked' if mail.use_tls }}
+                  style="width:16px;height:16px;accent-color:var(--accent)"></div>
+    </div>
+    <button type="submit" class="btn btn-primary btn-sm">Save mail settings</button>
+  </form>
+
+  <form method="post" action="{{ url_for('settings_mail_test') }}" class="row mt-2" style="gap:8px;align-items:flex-end">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div>
+      <label>Send a test email to</label>
+      <input type="text" name="to" value="{{ my_email }}" placeholder="you@nlcfcpa.com" style="width:230px">
+    </div>
+    <button type="submit" class="btn btn-secondary btn-sm">Send test</button>
+  </form>
 </div>
 
 <!-- Column mapping note -->

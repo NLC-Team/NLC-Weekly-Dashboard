@@ -1,0 +1,37 @@
+{% extends "auth_base.html" %}
+{% block title %}Verify your email — NLC Financial Dashboard{% endblock %}
+{% block auth %}
+<h1>Verify your email</h1>
+
+{% if done %}
+<div class="msg msg-ok">
+  Your email is verified. An administrator will approve your account shortly —
+  you'll be able to sign in once it's approved.
+</div>
+<div class="auth-foot"><a href="{{ url_for('login') }}">Back to sign in</a></div>
+{% else %}
+<p class="sub">Enter the 6-digit code we emailed to <strong>{{ email or 'your address' }}</strong>.</p>
+
+{% if info %}<div class="msg msg-ok">{{ info }}</div>{% endif %}
+{% if error %}<div class="msg msg-err">{{ error }}</div>{% endif %}
+
+<form method="post" action="{{ url_for('verify') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label for="email">Email address</label>
+  <input type="text" id="email" name="email" value="{{ email }}" autocomplete="email" required>
+  <label for="code">Verification code</label>
+  <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code"
+         placeholder="6-digit code" autofocus required>
+  <button type="submit" class="btn">Verify email</button>
+</form>
+
+<form method="post" action="{{ url_for('verify') }}" style="margin-top:10px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="email" value="{{ email }}">
+  <input type="hidden" name="action" value="resend">
+  <button type="submit" class="btn" style="background:#e3e8ee;color:var(--text)">Resend code</button>
+</form>
+
+<div class="auth-foot"><a href="{{ url_for('login') }}">Back to sign in</a></div>
+{% endif %}
+{% endblock %}

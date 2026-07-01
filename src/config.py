@@ -8,9 +8,27 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from pathlib import Path
 
 APP_NAME = "Karbon Pending Dashboard"
+
+# Only email addresses on this domain may sign up / hold an account. Change this
+# one value if the firm's domain ever changes.
+ALLOWED_EMAIL_DOMAIN = "nlcfcpa.com"
+
+
+def is_allowed_email(email: str) -> bool:
+    """True if `email` is a plausibly-formed address on the allowed domain."""
+    if not isinstance(email, str):
+        return False
+    e = email.strip().lower()
+    return (
+        e.count("@") == 1
+        and " " not in e
+        and "." in e.split("@", 1)[1]
+        and e.endswith("@" + ALLOWED_EMAIL_DOMAIN)
+    )
 
 # Logical fields the dashboard understands. The user maps their own CSV column
 # names onto these on the import screen. `required` fields must be mapped before
@@ -99,3 +117,33 @@ def active_db_path() -> Path:
     cfg = read_app_config()
     chosen = cfg.get("db_path")
     return Path(chosen) if chosen else default_db_path()
+
+
+def get_or_create_secret_key() -> str:
+    """Return a stable random key for signing Flask session cookies.
+
+    Persisted per-machine in the data dir (deliberately separate from the
+    possibly-shared database) so sessions survive restarts and can't be forged
+    the way the old hardcoded key allowed. Each machine signs its own cookies;
+    accounts themselves are shared via the database. Falls back to an ephemeral
+    key if the file can't be read or written.
+    """
+    key_path = default_data_dir() / "secret_key"
+    try:
+        if key_path.exists():
+            existing = key_path.read_text(encoding="utf-8").strip()
+            if existing:
+                return existing
+    except OSError:
+        pass
+
+    key = secrets.token_hex(32)
+    try:
+        key_path.write_text(key, encoding="utf-8")
+        try:
+            os.chmod(key_path, 0o600)  # best-effort; ignored on some filesystems
+        except OSError:
+            pass
+    except OSError:
+        pass  # ephemeral key: sessions won't survive restart, but app still runs
+    return key

@@ -160,42 +160,48 @@ label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase
 </head>
 <body>
 <nav class="sidebar">
-  <div class="sidebar-brand" style="display:flex;align-items:center;gap:11px;padding:20px 20px 18px">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="38" height="38" style="flex-shrink:0;border-radius:4px">
-      <rect width="64" height="64" fill="#1a3f8f" rx="5"/>
-      <rect x="7" y="7" width="50" height="50" fill="#4a9d4f" rx="3"/>
-      <text x="32" y="46" text-anchor="middle" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="28" fill="white" letter-spacing="-1">NLC</text>
-    </svg>
-    <span style="line-height:1.35">NLC<br>Financial<br>Dashboard</span>
+  <div class="sidebar-brand" style="padding:18px 18px 16px">
+    <!-- NLC letterhead mark on a white panel, like the firm's logo. -->
+    <div style="background:#fff;border-radius:6px;padding:9px 12px 8px;box-shadow:0 1px 3px rgba(0,0,0,.25)">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 62" width="100%" height="auto"
+           role="img" aria-label="NLC" style="display:block">
+        <rect x="1.5" y="1.5" width="165" height="59" fill="#ffffff"
+              stroke="#1a3f8f" stroke-width="2" rx="3"/>
+        <rect x="6" y="6" width="156" height="50" fill="none"
+              stroke="#4a9d4f" stroke-width="1" rx="2"/>
+        <text x="84" y="45" text-anchor="middle"
+              font-family="Georgia,'Times New Roman',serif" font-weight="700"
+              font-size="42" letter-spacing="2">
+          <tspan fill="#1a3f8f">N</tspan><tspan fill="#4a9d4f">L</tspan><tspan fill="#1a3f8f">C</tspan>
+        </text>
+      </svg>
+    </div>
+    <div style="margin-top:10px;font-size:11px;font-weight:700;letter-spacing:.09em;
+                text-transform:uppercase;color:#aebfd6;text-align:center">Financial Dashboard</div>
   </div>
   <a href="{{ url_for('overview') }}"  class="{{ 'active' if request.endpoint == 'overview' }}">Overview</a>
   <a href="{{ url_for('projects') }}"  class="{{ 'active' if request.endpoint == 'projects' }}">Tax Returns</a>
   <a href="{{ url_for('person') }}"    class="{{ 'active' if request.endpoint == 'person' }}">Staff &#8211; Clients</a>
   <a href="{{ url_for('overdue') }}"   class="{{ 'active' if request.endpoint == 'overdue' }}">Overdue</a>
+  {% if current_role == 'Admin' %}
   <a href="{{ url_for('staff') }}"     class="{{ 'active' if request.endpoint == 'staff' }}">Staff &amp; Roles</a>
   <a href="{{ url_for('import_view') }}" class="{{ 'active' if request.endpoint in ('import_view','import_upload','import_run') }}">Import</a>
   <a href="{{ url_for('settings') }}"  class="{{ 'active' if request.endpoint == 'settings' }}">Settings</a>
-  {% if current_role == 'Admin' %}
   <a href="{{ url_for('clients') }}"   class="{{ 'active' if request.endpoint == 'clients' }}" style="color:#fca5a5">Delete Clients</a>
   {% endif %}
 
-  <!-- Acting-as user selector (drives admin-only features) -->
+  <!-- Signed-in user + session controls -->
   <div style="margin-top:auto;padding:16px 20px;border-top:1px solid rgba(255,255,255,.07)">
-    <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8aa0bd;margin-bottom:7px">Acting as</div>
-    <form method="post" action="{{ url_for('whoami') }}">
-      <select name="user" onchange="this.form.submit()"
-              style="width:100%;font-size:12px;padding:7px 9px;background:#1a2e47;color:#e2eaf5;border:1px solid #2a3f5f">
-        <option value="" {{ 'selected' if not current_user }}>— Select user —</option>
-        {% for m in all_staff %}
-        <option value="{{ m.name }}" {{ 'selected' if m.name == current_user }}>{{ m.name }} ({{ m.role }})</option>
-        {% endfor %}
-      </select>
-    </form>
-    {% if current_user %}
-    <div style="margin-top:8px;display:flex;align-items:center;gap:6px">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8aa0bd;margin-bottom:7px">Signed in as</div>
+    <div style="color:#e2eaf5;font-size:13px;font-weight:700;line-height:1.3">{{ current_user }}</div>
+    <div style="margin-top:6px">
       <span class="badge {{ 'badge-admin' if current_role == 'Admin' else ('badge-manager' if current_role == 'Manager' else 'badge-viewer') }}">{{ current_role or 'No role' }}</span>
     </div>
-    {% endif %}
+    <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+      <a href="{{ url_for('account_password') }}" style="font-size:11px;color:#aebfd6;text-decoration:none">Change password</a>
+      <a href="{{ url_for('logout') }}" class="btn btn-sm"
+         style="background:#1a2e47;color:#e2eaf5;justify-content:center;text-decoration:none">Log out</a>
+    </div>
   </div>
 </nav>
 <main class="main">

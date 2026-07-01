@@ -20,9 +20,11 @@
 
 <form method="post" action="{{ url_for('clients_delete') }}"
       onsubmit="return confirmDelete();">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <div class="row mb-2" style="gap:12px;align-items:center;flex-wrap:wrap">
     <button type="submit" class="btn btn-danger" id="deleteBtn" disabled>Delete selected (0)</button>
-    <span class="text-muted" style="font-size:12px">Tick the clients you want to remove. This cannot be undone.</span>
+    <button type="button" class="btn btn-secondary" id="selectAllBtn" onclick="toggleSelectAll()">Select all</button>
+    <span class="text-muted" style="font-size:12px">Tick the clients you want to remove, or use <strong>Select all</strong>. This cannot be undone.</span>
     <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
            stroke="#374151" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -71,30 +73,60 @@
 </form>
 
 <script>
-function checkedBoxes() {
+// Checkboxes on rows currently visible (respects the search filter).
+function visibleBoxes() {
   return Array.from(document.querySelectorAll('.rowChk')).filter(function (c) {
-    return c.checked && c.closest('tr').style.display !== 'none';
+    return c.closest('tr').style.display !== 'none';
   });
 }
 function updateCount() {
-  const n = document.querySelectorAll('.rowChk:checked').length;
+  // The form submits every checked box, visible or hidden by search, so the
+  // delete count must reflect the true total that will be removed.
+  const totalChecked = document.querySelectorAll('.rowChk:checked').length;
   const btn = document.getElementById('deleteBtn');
-  btn.textContent = 'Delete selected (' + n + ')';
-  btn.disabled = n === 0;
+  btn.textContent = 'Delete selected (' + totalChecked + ')';
+  btn.disabled = totalChecked === 0;
+
+  // "Select all" and the header checkbox act on what's currently visible.
+  const boxes = visibleBoxes();
+  const visChecked = boxes.filter(function (c) { return c.checked; }).length;
+  const allVisSelected = boxes.length > 0 && visChecked === boxes.length;
+
+  // Keep the header master checkbox in sync: checked when all visible are
+  // selected, indeterminate on a partial selection, unchecked when none.
+  const master = document.getElementById('selectAll');
+  if (master) {
+    master.checked = allVisSelected;
+    master.indeterminate = visChecked > 0 && !allVisSelected;
+  }
+
+  // The "Select all" button flips to "Clear selection" once everything's picked.
+  const selBtn = document.getElementById('selectAllBtn');
+  if (selBtn) {
+    selBtn.textContent = allVisSelected ? 'Clear selection' : 'Select all (' + boxes.length + ')';
+  }
 }
-function toggleAll(master) {
-  document.querySelectorAll('#clientsBody tr').forEach(function (row) {
-    if (row.style.display === 'none') return;  // only toggle visible rows
-    const chk = row.querySelector('.rowChk');
-    if (chk) chk.checked = master.checked;
-  });
+// Set every visible row's checkbox to `state`.
+function setAllVisible(state) {
+  visibleBoxes().forEach(function (c) { c.checked = state; });
   updateCount();
+}
+// Header checkbox in the table.
+function toggleAll(master) {
+  setAllVisible(master.checked);
+}
+// Prominent toolbar button: select everything, or clear if already all selected.
+function toggleSelectAll() {
+  const boxes = visibleBoxes();
+  const allSelected = boxes.length > 0 && boxes.every(function (c) { return c.checked; });
+  setAllVisible(!allSelected);
 }
 function filterClients(q) {
   const term = q.trim().toLowerCase();
   document.querySelectorAll('#clientsBody tr[data-client]').forEach(function (row) {
     row.style.display = (!term || row.dataset.client.includes(term)) ? '' : 'none';
   });
+  updateCount();  // selection totals are relative to what's visible
 }
 function confirmDelete() {
   const n = document.querySelectorAll('.rowChk:checked').length;
@@ -102,6 +134,7 @@ function confirmDelete() {
   return confirm('Permanently delete ' + n + ' client' + (n === 1 ? '' : 's') +
                  ' and all their documents? This cannot be undone.');
 }
+updateCount();  // set the initial button labels on page load
 </script>
 {% endif %}
 {% endblock %}

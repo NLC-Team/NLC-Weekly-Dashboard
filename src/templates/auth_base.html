@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}NLC Financial Dashboard{% endblock %}</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiBmaWxsPSIjMWEzZjhmIiByeD0iNSIvPjxyZWN0IHg9IjciIHk9IjciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCIgZmlsbD0iIzRhOWQ0ZiIgcng9IjMiLz48dGV4dCB4PSIzMiIgeT0iNDYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCBCbGFjayxBcmlhbCxzYW5zLXNlcmlmIiBmb250LXdlaWdodD0iOTAwIiBmb250LXNpemU9IjI4IiBmaWxsPSJ3aGl0ZSIgbGV0dGVyLXNwYWNpbmc9Ii0xIj5OTEM8L3RleHQ+PC9zdmc+">
+<style>
+:root{
+  --navy:#1a3f8f;--green:#4a9d4f;--text:#0f1923;--muted:#5b6675;--border:#d1d9e0;
+  --danger:#b91c1c;--danger-bg:#fee2e2;--danger-border:#fca5a5;
+  --ok:#15803d;--ok-bg:#f0fdf4;--ok-border:#86efac;--accent:#1d4ed8;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(160deg,#f4f7fb,#e4ecf6);
+  color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.auth-card{background:#fff;border:1px solid var(--border);border-radius:14px;
+  box-shadow:0 12px 44px rgba(15,25,35,.12);width:100%;max-width:404px;padding:30px 30px 26px}
+.auth-logo{display:flex;justify-content:center;margin-bottom:16px}
+.auth-logo svg{display:block}
+h1{font-size:20px;font-weight:800;text-align:center;margin-bottom:4px}
+.sub{font-size:12.5px;color:var(--muted);text-align:center;margin-bottom:22px;line-height:1.5}
+label{display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.05em;margin:0 0 5px}
+input[type=text],input[type=password]{width:100%;padding:10px 12px;border:1px solid var(--border);
+  border-radius:8px;font-size:14px;font-family:inherit;margin-bottom:15px;background:#fff;color:var(--text)}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(29,78,216,.12)}
+.btn{width:100%;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;
+  font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:background .12s}
+.btn:hover{background:#163475}
+.msg{padding:10px 13px;border-radius:8px;font-size:12.5px;font-weight:600;margin-bottom:16px}
+.msg-err{background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger-border)}
+.msg-ok{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-border)}
+.auth-foot{text-align:center;font-size:12.5px;color:var(--muted);margin-top:18px}
+.auth-foot a{color:var(--accent);text-decoration:none;font-weight:600}
+.auth-foot a:hover{text-decoration:underline}
+.hint{font-size:11px;color:var(--muted);margin:-9px 0 15px}
+</style>
+</head>
+<body>
+  <div class="auth-card">
+    <div class="auth-logo">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 62" width="150" height="55" role="img" aria-label="NLC">
+        <rect x="1.5" y="1.5" width="165" height="59" fill="#ffffff" stroke="#1a3f8f" stroke-width="2" rx="3"/>
+        <rect x="6" y="6" width="156" height="50" fill="none" stroke="#4a9d4f" stroke-width="1" rx="2"/>
+        <text x="84" y="45" text-anchor="middle" font-family="Georgia,'Times New Roman',serif"
+              font-weight="700" font-size="42" letter-spacing="2">
+          <tspan fill="#1a3f8f">N</tspan><tspan fill="#4a9d4f">L</tspan><tspan fill="#1a3f8f">C</tspan>
+        </text>
+      </svg>
+    </div>
+    {% block auth %}{% endblock %}
+  </div>
+</body>
+</html>

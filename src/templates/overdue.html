@@ -16,13 +16,22 @@
   </div>
   {% endfor %}
 </div>
-{% endif %}
+
+<!-- Employee picker -->
+<div class="row mb-2" style="gap:10px;align-items:center">
+  <label style="margin-bottom:0">Staff member</label>
+  <select id="staffPicker" onchange="filterStaff(this.value)" style="min-width:240px">
+    <option value="__all__">All staff ({{ overdue_items|length }})</option>
+    {% for person, items in ranked %}
+    <option value="{{ person }}">{{ person }} ({{ items|length }})</option>
+    {% endfor %}
+  </select>
+</div>
 
 <div class="table-wrap">
   <table>
     <thead>
       <tr>
-        <th>Staff member</th>
         <th>Client</th>
         <th>Document / work</th>
         <th>Status</th>
@@ -30,20 +39,34 @@
         <th>Days overdue</th>
       </tr>
     </thead>
-    <tbody>
-      {% for it in overdue_items %}
+    {% for person, items in ranked %}
+    <tbody class="staff-group" data-person="{{ person }}">
+      <tr class="group-head">
+        <td colspan="5" style="background:var(--bg);font-weight:800;color:var(--text);padding:12px 14px">
+          <a href="{{ url_for('person', name=person) }}" style="color:var(--text);text-decoration:none">{{ person }}</a>
+          <span class="text-muted" style="font-weight:600;font-size:12px"> — {{ items|length }} overdue</span>
+        </td>
+      </tr>
+      {% for it in items %}
       <tr class="overdue">
-        <td><a href="{{ url_for('person', name=it.assignee) }}" style="color:var(--danger);font-weight:600">{{ it.assignee }}</a></td>
         <td>{{ it.client }}</td>
         <td style="font-weight:600">{{ it.title }}</td>
         <td>{{ it.status }}</td>
         <td style="font-weight:700">{{ it.age_days }}</td>
         <td style="font-weight:700">{{ it.age_days - overdue_days }}</td>
       </tr>
-      {% else %}
-      <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No overdue items.</td></tr>
       {% endfor %}
     </tbody>
+    {% endfor %}
   </table>
 </div>
+
+<script>
+function filterStaff(val) {
+  document.querySelectorAll('tbody.staff-group').forEach(function (tb) {
+    tb.style.display = (val === '__all__' || tb.dataset.person === val) ? '' : 'none';
+  });
+}
+</script>
+{% endif %}
 {% endblock %}

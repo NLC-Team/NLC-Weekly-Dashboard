@@ -58,17 +58,30 @@ CREATE TABLE IF NOT EXISTS project_state (
     completed    INTEGER DEFAULT 0,
     completed_at TEXT
 );
--- Staff directory: names and their access roles.
+-- Staff directory + login accounts: names, access roles, and credentials.
+-- username is the unique login handle; password_hash is a Werkzeug hash;
+-- status is 'active' (can log in) or 'pending' (awaiting admin approval).
 CREATE TABLE IF NOT EXISTS staff (
-    name     TEXT PRIMARY KEY,
-    role     TEXT DEFAULT 'Viewer',
-    added_at TEXT
+    name          TEXT PRIMARY KEY,
+    role          TEXT DEFAULT 'Viewer',
+    added_at      TEXT,
+    username      TEXT,
+    password_hash TEXT,
+    status        TEXT DEFAULT 'active',
+    email         TEXT
 );
+-- The dashboard reads active items on every page load via
+-- "WHERE resolved=0"; index it so that stays fast as resolved history grows.
+CREATE INDEX IF NOT EXISTS idx_items_resolved ON items(resolved);
 """
 
 # Columns added after the first release; applied to older databases on open.
 _MIGRATIONS = {
     "items": [("project_key", "TEXT"), ("return_type_raw", "TEXT")],
+    "staff": [("username", "TEXT"), ("password_hash", "TEXT"),
+              ("status", "TEXT DEFAULT 'active'"), ("email", "TEXT"),
+              ("email_verified", "INTEGER DEFAULT 0"),
+              ("verify_code", "TEXT"), ("verify_sent_at", "TEXT")],
 }
 
 
@@ -94,14 +107,44 @@ class Store:
         self.conn.executescript(SCHEMA)
         self._migrate()
         self.conn.commit()
+        # Bumped on every write that changes what the dashboard shows, so the
+        # web layer can cache computed dashboard data and only recompute when
+        # this number moves. Starts at 1 so a fresh (uncached) key never matches.
+        self._data_version = 1
+
+    @property
+    def data_version(self) -> int:
+        """Monotonic counter that increments on any dashboard-affecting write."""
+        return self._data_version
+
+    def _bump(self) -> None:
+        self._data_version += 1
 
     def _migrate(self):
         """Add any columns introduced after a database was first created."""
         for table, cols in _MIGRATIONS.items():
             existing = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            newly_added = []
             for name, decl in cols:
                 if name not in existing:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                    newly_added.append(name)
+            # When email verification is first introduced, accounts that already
+            # existed were already trusted — treat their email as verified so the
+            # switch to email login doesn't lock anyone out.
+            if table == "staff" and "email_verified" in newly_added:
+                self.conn.execute("UPDATE staff SET email_verified=1")
+        # Login handles must be unique. Created here (not in SCHEMA) so they run
+        # after the columns are guaranteed to exist on older databases.
+        # Partial indexes: legacy rows with NULL username/email don't collide.
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_username "
+            "ON staff(username) WHERE username IS NOT NULL"
+        )
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_email "
+            "ON staff(email) WHERE email IS NOT NULL"
+        )
 
     def close(self):
         self.conn.close()
@@ -154,41 +197,49 @@ class Store:
         """Insert/update pending items and mark vanished ones as resolved.
 
         Returns a small stats dict: {new, updated, resolved}.
+
+        Existing keys are fetched once up front and inserts/updates are batched
+        with executemany, so an N-row import runs a handful of statements rather
+        than 1-2 queries per row.
         """
         iso = today.isoformat()
-        new = updated = 0
+        existing = {
+            r["item_key"] for r in self.conn.execute("SELECT item_key FROM items")
+        }
+
+        inserts: list[tuple] = []
+        updates: list[tuple] = []
         for rec in pending_records:
-            existing = self.conn.execute(
-                "SELECT item_key, first_seen FROM items WHERE item_key=?",
-                (rec["item_key"],),
-            ).fetchone()
-            if existing is None:
+            if rec["item_key"] not in existing:
                 # first_seen uses the real source date when available, else today.
                 first_seen = _iso(rec.get("source_date")) or iso
-                self.conn.execute(
-                    "INSERT INTO items(item_key, assignee, client, title, last_status, "
-                    "source_date, first_seen, last_seen, resolved, resolved_at, "
-                    "project_key, return_type_raw) "
-                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
-                    (
-                        rec["item_key"], rec["assignee"], rec["client"], rec["title"],
-                        rec["status"], _iso(rec.get("source_date")), first_seen, iso,
-                        rec.get("project_key"), rec.get("return_type_raw"),
-                    ),
-                )
-                new += 1
+                inserts.append((
+                    rec["item_key"], rec["assignee"], rec["client"], rec["title"],
+                    rec["status"], _iso(rec.get("source_date")), first_seen, iso,
+                    rec.get("project_key"), rec.get("return_type_raw"),
+                ))
             else:
-                self.conn.execute(
-                    "UPDATE items SET assignee=?, client=?, title=?, last_status=?, "
-                    "source_date=COALESCE(?, source_date), last_seen=?, resolved=0, "
-                    "resolved_at=NULL, project_key=?, return_type_raw=? WHERE item_key=?",
-                    (
-                        rec["assignee"], rec["client"], rec["title"], rec["status"],
-                        _iso(rec.get("source_date")), iso,
-                        rec.get("project_key"), rec.get("return_type_raw"), rec["item_key"],
-                    ),
-                )
-                updated += 1
+                updates.append((
+                    rec["assignee"], rec["client"], rec["title"], rec["status"],
+                    _iso(rec.get("source_date")), iso,
+                    rec.get("project_key"), rec.get("return_type_raw"), rec["item_key"],
+                ))
+
+        if inserts:
+            self.conn.executemany(
+                "INSERT INTO items(item_key, assignee, client, title, last_status, "
+                "source_date, first_seen, last_seen, resolved, resolved_at, "
+                "project_key, return_type_raw) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
+                inserts,
+            )
+        if updates:
+            self.conn.executemany(
+                "UPDATE items SET assignee=?, client=?, title=?, last_status=?, "
+                "source_date=COALESCE(?, source_date), last_seen=?, resolved=0, "
+                "resolved_at=NULL, project_key=?, return_type_raw=? WHERE item_key=?",
+                updates,
+            )
 
         # Anything still marked active but not seen in this import is now resolved.
         cur = self.conn.execute(
@@ -197,7 +248,8 @@ class Store:
         )
         resolved = cur.rowcount
         self.conn.commit()
-        return {"new": new, "updated": updated, "resolved": resolved}
+        self._bump()
+        return {"new": len(inserts), "updated": len(updates), "resolved": resolved}
 
     def active_items(self) -> list[dict]:
         """Current pending items (latest import, not resolved), with history.
@@ -244,6 +296,7 @@ class Store:
             (item_key, 1 if received else 0, today.isoformat() if received else None),
         )
         self.conn.commit()
+        self._bump()
 
     # ---- project state (return type + completion) ----------------------
     def get_project_states(self) -> dict:
@@ -263,6 +316,7 @@ class Store:
             (project_key, return_type),
         )
         self.conn.commit()
+        self._bump()
 
     def set_project_completed(self, project_key: str, completed: bool, today: date) -> None:
         self.conn.execute(
@@ -272,13 +326,23 @@ class Store:
             (project_key, 1 if completed else 0, today.isoformat() if completed else None),
         )
         self.conn.commit()
+        self._bump()
 
-    # ---- staff directory -----------------------------------------------
+    # ---- staff directory + login accounts ------------------------------
     def get_staff(self) -> list[dict]:
+        """All active staff (the directory). Excludes pending sign-ups."""
         rows = self.conn.execute(
-            "SELECT name, role FROM staff ORDER BY name"
+            "SELECT name, role, username, email, status, password_hash, "
+            "COALESCE(email_verified,0) AS email_verified FROM staff "
+            "WHERE status='active' OR status IS NULL ORDER BY name"
         ).fetchall()
-        return [{"name": r["name"], "role": r["role"]} for r in rows]
+        return [
+            {"name": r["name"], "role": r["role"], "username": r["username"],
+             "email": r["email"], "status": r["status"] or "active",
+             "email_verified": bool(r["email_verified"]),
+             "has_login": bool(r["password_hash"])}
+            for r in rows
+        ]
 
     def upsert_staff(self, name: str, role: str, today: date | None = None) -> None:
         added = today.isoformat() if today else None
@@ -293,6 +357,124 @@ class Store:
         self.conn.execute("DELETE FROM staff WHERE name=?", (name,))
         self.conn.commit()
 
+    # ---- login accounts -------------------------------------------------
+    # Accounts are managed by `name` (the primary key) and authenticated by
+    # `email` (the login handle; `username` remains as a legacy fallback).
+    _ACCOUNT_COLS = ("name, role, username, email, status, password_hash, "
+                     "COALESCE(email_verified,0) AS email_verified, verify_code, verify_sent_at")
+
+    @staticmethod
+    def _account(r) -> dict | None:
+        if not r:
+            return None
+        return {
+            "name": r["name"], "role": r["role"], "username": r["username"],
+            "email": r["email"], "status": r["status"] or "active",
+            "password_hash": r["password_hash"],
+            "email_verified": bool(r["email_verified"]),
+            "verify_code": r["verify_code"], "verify_sent_at": r["verify_sent_at"],
+            "has_login": bool(r["password_hash"]),
+        }
+
+    def get_account_by_name(self, name: str) -> dict | None:
+        if not name:
+            return None
+        return self._account(self.conn.execute(
+            f"SELECT {self._ACCOUNT_COLS} FROM staff WHERE name=?", (name,)).fetchone())
+
+    def get_account_by_email(self, email: str) -> dict | None:
+        if not email:
+            return None
+        return self._account(self.conn.execute(
+            f"SELECT {self._ACCOUNT_COLS} FROM staff WHERE email=? COLLATE NOCASE",
+            (email,)).fetchone())
+
+    def get_account_by_username(self, username: str) -> dict | None:
+        if not username:
+            return None
+        return self._account(self.conn.execute(
+            f"SELECT {self._ACCOUNT_COLS} FROM staff WHERE username=? COLLATE NOCASE",
+            (username,)).fetchone())
+
+    def get_account_by_login(self, login: str) -> dict | None:
+        """Authenticate lookup: email first, then username (legacy fallback)."""
+        if not login:
+            return None
+        acct = self.get_account_by_email(login)
+        if acct:
+            return acct
+        return self._account(self.conn.execute(
+            f"SELECT {self._ACCOUNT_COLS} FROM staff WHERE username=?", (login,)).fetchone())
+
+    def create_account(self, name: str, role: str, password_hash: str, status: str, *,
+                       email: str | None = None, username: str | None = None,
+                       email_verified: int = 0, verify_code: str | None = None,
+                       verify_sent_at: str | None = None, today: date | None = None) -> None:
+        """Create a login account. Raises sqlite3.IntegrityError if the display
+        name (primary key), username or email is already in use."""
+        self.conn.execute(
+            "INSERT INTO staff(name, role, added_at, username, email, password_hash, "
+            "status, email_verified, verify_code, verify_sent_at) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, role, today.isoformat() if today else None, username, email,
+             password_hash, status, 1 if email_verified else 0, verify_code, verify_sent_at),
+        )
+        self.conn.commit()
+
+    def set_login(self, name: str, email: str, password_hash: str) -> None:
+        """Set a member's email login + password and activate them (admin action
+        for legacy rows / resets). Marks the email verified since an admin set it."""
+        self.conn.execute(
+            "UPDATE staff SET email=?, password_hash=?, status='active', email_verified=1 "
+            "WHERE name=?",
+            (email, password_hash, name),
+        )
+        self.conn.commit()
+
+    def set_password(self, name: str, password_hash: str) -> None:
+        self.conn.execute(
+            "UPDATE staff SET password_hash=? WHERE name=?", (password_hash, name))
+        self.conn.commit()
+
+    def set_email(self, name: str, email: str) -> None:
+        """Set/replace a logged-in user's own email (treated as verified)."""
+        self.conn.execute(
+            "UPDATE staff SET email=?, email_verified=1 WHERE name=?", (email, name))
+        self.conn.commit()
+
+    def set_verify_code(self, name: str, code: str, sent_at: str) -> None:
+        self.conn.execute(
+            "UPDATE staff SET verify_code=?, verify_sent_at=? WHERE name=?",
+            (code, sent_at, name))
+        self.conn.commit()
+
+    def mark_email_verified(self, name: str) -> None:
+        self.conn.execute(
+            "UPDATE staff SET email_verified=1, verify_code=NULL WHERE name=?", (name,))
+        self.conn.commit()
+
+    def approve_account(self, name: str, role: str) -> None:
+        self.conn.execute(
+            "UPDATE staff SET status='active', role=? WHERE name=?", (role, name))
+        self.conn.commit()
+
+    def list_pending(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT name, role, username, email, COALESCE(email_verified,0) AS email_verified "
+            "FROM staff WHERE status='pending' ORDER BY added_at"
+        ).fetchall()
+        return [{"name": r["name"], "role": r["role"], "username": r["username"],
+                 "email": r["email"], "email_verified": bool(r["email_verified"])}
+                for r in rows]
+
+    def count_active_admins(self) -> int:
+        """Admins who can actually log in (active + have a password)."""
+        r = self.conn.execute(
+            "SELECT COUNT(*) FROM staff WHERE role='Admin' AND status='active' "
+            "AND password_hash IS NOT NULL AND password_hash != ''"
+        ).fetchone()
+        return r[0]
+
     # ---- delete a client / project entirely ----------------------------
     def delete_project(self, project_key: str, item_keys: list[str]) -> None:
         """Permanently remove a client/project: its items, document state,
@@ -303,3 +485,4 @@ class Store:
             self.conn.execute("DELETE FROM doc_state WHERE item_key=?", (ik,))
         self.conn.execute("DELETE FROM project_state WHERE project_key=?", (project_key,))
         self.conn.commit()
+        self._bump()

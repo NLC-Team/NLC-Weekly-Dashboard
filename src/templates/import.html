@@ -42,6 +42,7 @@
   </p>
 
   <form method="post" action="{{ url_for('import_run') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="map-grid mb-2">
       {% for field, label, required in logical_fields %}
       <div style="font-size:12px;font-weight:{{ '700' if required else '400' }}">
@@ -90,6 +91,7 @@
     Upload your Excel (.xlsx) or CSV export. The dashboard will remember the column mapping for next time.
   </p>
   <form method="post" action="{{ url_for('import_upload') }}" enctype="multipart/form-data" class="row">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="file" name="csv_file" accept=".csv,.xlsx,.xls,.xlsm"
            style="font-size:12px;padding:6px;border:1px solid var(--border);border-radius:7px;background:white">
     <button type="submit" class="btn btn-primary">Upload &amp; continue</button>

@@ -98,6 +98,7 @@
 
     <div class="row mb-2">
       <form method="post" action="{{ url_for('project_type') }}" style="display:flex;gap:8px;align-items:center">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="pkey" value="{{ selected.project_key }}">
         <input type="hidden" name="filter" value="{{ filter_type }}">
         <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
@@ -110,6 +111,7 @@
       </form>
 
       <form method="post" action="{{ url_for('project_complete') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="pkey" value="{{ selected.project_key }}">
         <input type="hidden" name="filter" value="{{ filter_type }}">
         <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
@@ -121,6 +123,7 @@
       <form method="post" action="{{ url_for('project_delete') }}"
             onsubmit="return confirm('Delete {{ selected.client }} permanently? This removes the client and all their documents and cannot be undone.');"
             style="margin-left:auto">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="pkey" value="{{ selected.project_key }}">
         <input type="hidden" name="filter" value="{{ filter_type }}">
         <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
@@ -134,6 +137,7 @@
     <div class="check-list">
       {% for doc in selected.documents %}
       <form method="post" action="{{ url_for('project_doc') }}" class="check-item {{ 'received' if doc.received else ('overdue-doc' if doc.overdue) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="item_key" value="{{ doc.item_key }}">
         <input type="hidden" name="received" value="{{ '0' if doc.received else '1' }}">
         <input type="checkbox" {{ 'checked' if doc.received }} onchange="this.closest('form').submit()">
