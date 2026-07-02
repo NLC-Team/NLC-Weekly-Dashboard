@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Iterable
 
-from config import AGE_BUCKETS, classify_return_type
+from config import AGE_BUCKETS, normalize_return_type
 
 
 def item_age_days(item: dict, today: date) -> int:
@@ -107,11 +107,12 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
     projects = []
     for pkey, docs in groups.items():
         state = project_states.get(pkey, {})
-        # Effective return type: manual override wins, else classify a raw value.
+        # Effective return type: a manual override wins, else the specific type
+        # from the data (kept verbatim, e.g. "Tax: 1040"), else "Unclassified".
         rtype = state.get("return_type")
         if not rtype:
             raw = next((d.get("return_type_raw") for d in docs if d.get("return_type_raw")), None)
-            rtype = classify_return_type(raw)
+            rtype = normalize_return_type(raw)
         completed = bool(state.get("completed", False))
 
         doc_rows = []
@@ -156,17 +157,22 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
 
 
 def project_totals(projects: list[dict]) -> dict:
-    """Headline numbers for the tax-return tracker."""
+    """Headline numbers for the tax-return tracker.
+
+    `by_type` counts open projects per specific type (e.g. {"Tax: 1040": 12,
+    "Accounting/Bookkeeping": 5, ...}), highest first — it grows automatically as
+    new types appear in the data, so nothing here is hard-coded to a fixed set.
+    """
     open_projects = [p for p in projects if p["open"]]
-    by_type = {"Individual": 0, "Business": 0, "Unclassified": 0}
+    by_type: dict[str, int] = {}
     for p in open_projects:
         by_type[p["return_type"]] = by_type.get(p["return_type"], 0) + 1
+    by_type = dict(sorted(by_type.items(), key=lambda kv: (-kv[1], kv[0].lower())))
     pcts = [p["pct_complete"] for p in open_projects]
     return {
         "open_total": len(open_projects),
-        "open_individual": by_type["Individual"],
-        "open_business": by_type["Business"],
-        "open_unclassified": by_type["Unclassified"],
+        "by_type": by_type,
+        "type_count": len(by_type),
         "completed_total": sum(1 for p in projects if p["completed"]),
         "avg_pct_complete": round(sum(pcts) / len(pcts)) if pcts else 0,
         "docs_outstanding": sum(p["outstanding_docs"] for p in open_projects),

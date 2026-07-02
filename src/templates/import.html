@@ -25,8 +25,8 @@
   <div style="display:grid;grid-template-columns:repeat(4,auto);gap:24px;margin-bottom:16px">
     <div><div class="kpi-value text-accent" style="font-size:24px">{{ result.rows }}</div><div class="kpi-label">Total rows</div></div>
     <div><div class="kpi-value text-accent" style="font-size:24px">{{ result.pending }}</div><div class="kpi-label">Pending found</div></div>
-    <div><div class="kpi-value text-ok" style="font-size:24px">{{ result.new }}</div><div class="kpi-label">New items</div></div>
-    <div><div class="kpi-value" style="font-size:24px;color:var(--muted)">{{ result.resolved }}</div><div class="kpi-label">Resolved</div></div>
+    <div><div class="kpi-value text-ok" style="font-size:24px">{{ result.new }}</div><div class="kpi-label">New items added</div></div>
+    <div><div class="kpi-value" style="font-size:24px;color:var(--muted)">{{ result.updated }}</div><div class="kpi-label">Existing updated</div></div>
   </div>
   <a href="{{ url_for('overview') }}" class="btn btn-primary">Go to Overview</a>
 </div>

@@ -10,12 +10,13 @@ TODAY = date(2026, 6, 29)
 
 
 # ---- return-type classification ----------------------------------------
-def test_classify_return_type():
-    assert config.classify_return_type("1040 Individual") == "Individual"
-    assert config.classify_return_type("1120 Corporation") == "Business"
-    assert config.classify_return_type("1065 Partnership") == "Business"
-    assert config.classify_return_type("") == "Unclassified"
-    assert config.classify_return_type("Bookkeeping") == "Unclassified"
+def test_normalize_return_type_keeps_specific_value():
+    # The exact type from the data is preserved (just trimmed), not bucketed.
+    assert config.normalize_return_type("Tax: 1040") == "Tax: 1040"
+    assert config.normalize_return_type("  Accounting/Bookkeeping ") == "Accounting/Bookkeeping"
+    assert config.normalize_return_type("Tax: 1120S (S-Corp)") == "Tax: 1120S (S-Corp)"
+    assert config.normalize_return_type("") == "Unclassified"
+    assert config.normalize_return_type(None) == "Unclassified"
 
 
 # ---- importer: project_key + return_type_raw ----------------------------
@@ -68,8 +69,9 @@ def test_build_projects_groups_and_classifies():
     projects = analytics.build_projects(items, doc_states={}, project_states={})
     by_client = {p["client"]: p for p in projects}
     assert by_client["Smith"]["total_docs"] == 2
-    assert by_client["Smith"]["return_type"] == "Individual"
-    assert by_client["Acme"]["return_type"] == "Business"
+    # Specific type from the data is kept verbatim (no Individual/Business bucketing).
+    assert by_client["Smith"]["return_type"] == "1040 Individual"
+    assert by_client["Acme"]["return_type"] == "1120 Corporation"
     assert by_client["Smith"]["days_open"] == 30  # oldest doc
     assert by_client["Smith"]["received_docs"] == 0
 
@@ -86,9 +88,9 @@ def test_build_projects_received_counts_and_pct():
 
 def test_manual_type_overrides_classification():
     items = _enriched([_item("d1", "Smith", "W-2", 5, "1040 Individual")])
-    pstates = {"c:smith": {"return_type": "Business", "completed": False}}
+    pstates = {"c:smith": {"return_type": "Tax: 1040", "completed": False}}
     p = analytics.build_projects(items, {}, pstates)[0]
-    assert p["return_type"] == "Business"  # manual override beats the 1040 hint
+    assert p["return_type"] == "Tax: 1040"  # manual override beats the data value
 
 
 def test_completed_project_is_not_open():
@@ -101,17 +103,20 @@ def test_completed_project_is_not_open():
     assert totals["completed_total"] == 1
 
 
-def test_project_totals_split_by_type():
+def test_project_totals_split_by_specific_type():
     items = _enriched([
-        _item("d1", "Smith", "W-2", 5, "1040"),
-        _item("d2", "Acme", "TB", 5, "1120"),
-        _item("d3", "Jones", "W-2", 5, ""),  # unclassified
+        _item("d1", "Smith", "W-2", 5, "Tax: 1040"),
+        _item("d2", "Acme", "TB", 5, "Tax: 1120"),
+        _item("d3", "Jones", "Ledger", 5, "Accounting/Bookkeeping"),
+        _item("d4", "Doe", "W-2", 5, ""),  # no type -> Unclassified
     ])
     totals = analytics.project_totals(analytics.build_projects(items, {}, {}))
-    assert totals["open_total"] == 3
-    assert totals["open_individual"] == 1
-    assert totals["open_business"] == 1
-    assert totals["open_unclassified"] == 1
+    assert totals["open_total"] == 4
+    assert totals["type_count"] == 4
+    assert totals["by_type"]["Tax: 1040"] == 1
+    assert totals["by_type"]["Tax: 1120"] == 1
+    assert totals["by_type"]["Accounting/Bookkeeping"] == 1
+    assert totals["by_type"]["Unclassified"] == 1
 
 
 # ---- store: doc + project state ----------------------------------------

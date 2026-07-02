@@ -54,26 +54,27 @@ def test_source_date_used_as_first_seen(store):
     assert items[0]["first_seen"] == src
 
 
-def test_vanished_item_is_resolved(store):
+def test_imports_are_additive_and_keep_vanished_items(store):
+    """A later, partial import must NOT wipe items it doesn't contain."""
     day1 = date(2026, 6, 1)
     day2 = date(2026, 6, 10)
     store.upsert_items([_rec("id:1"), _rec("id:2")], day1)
-    stats = store.upsert_items([_rec("id:1")], day2)  # id:2 disappeared
-    assert stats["resolved"] == 1
+    stats = store.upsert_items([_rec("id:1")], day2)  # id:2 absent this time
+    assert "resolved" not in stats            # nothing is auto-removed anymore
     keys = {it["item_key"] for it in store.active_items()}
-    assert keys == {"id:1"}
+    assert keys == {"id:1", "id:2"}           # both kept
 
 
-def test_resolved_item_reappears_as_active(store):
-    store.upsert_items([_rec("id:1"), _rec("id:2")], date(2026, 6, 1))
-    store.upsert_items([_rec("id:1")], date(2026, 6, 10))  # id:2 resolved
-    store.upsert_items([_rec("id:1"), _rec("id:2")], date(2026, 6, 20))  # id:2 back
+def test_import_accumulates_across_files(store):
+    """Importing a different file adds to the data rather than replacing it."""
+    store.upsert_items([_rec("id:1")], date(2026, 6, 1))
+    store.upsert_items([_rec("id:2")], date(2026, 6, 10))  # a different export
     keys = {it["item_key"] for it in store.active_items()}
     assert keys == {"id:1", "id:2"}
 
 
 def test_import_stats(store):
     stats = store.upsert_items([_rec("id:1"), _rec("id:2")], date(2026, 6, 1))
-    assert stats == {"new": 2, "updated": 0, "resolved": 0}
+    assert stats == {"new": 2, "updated": 0}
     store.record_import("file.csv", 10, 2, date(2026, 6, 1))
     assert store.last_import()["pending_count"] == 2

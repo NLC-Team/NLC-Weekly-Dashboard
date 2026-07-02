@@ -650,8 +650,13 @@ def projects():
         ft = "All"
     else:
         relevant = [p for p in all_proj if not p["completed"]]
+
+    # Filter chips are built from the specific types actually present in the open
+    # returns, so a brand-new type from an import shows up on its own — no fixed list.
+    type_chips = sorted({p["return_type"] for p in all_proj if not p["completed"]},
+                        key=str.lower)
     counts = {"All": len(relevant)}
-    for t in ("Individual", "Business", "Unclassified"):
+    for t in type_chips:
         counts[t] = sum(1 for p in relevant if p["return_type"] == t)
 
     display = [p for p in relevant if ft == "All" or p["return_type"] == ft]
@@ -660,11 +665,15 @@ def projects():
 
     selected = next((p for p in all_proj if p["project_key"] == pkey), None)
     totals = data["project_totals"]
+    # Every type seen anywhere (open or completed) + Unclassified, for the
+    # reclassify dropdown; admins can also type a brand-new one in the box.
+    all_types = sorted({p["return_type"] for p in all_proj} | {config.UNCLASSIFIED},
+                       key=str.lower)
     return render_template("projects.html",
                            display=display, selected=selected,
                            filter_type=ft, show_done=show_done,
                            counts=counts, totals=totals,
-                           return_types=config.RETURN_TYPES)
+                           type_chips=type_chips, all_types=all_types)
 
 
 @app.route("/projects/doc", methods=["POST"])
@@ -681,7 +690,10 @@ def project_doc():
 @app.route("/projects/type", methods=["POST"])
 @manager_required
 def project_type():
-    get_store().set_project_type(request.form["pkey"], request.form["return_type"])
+    # A typed-in custom value wins over the dropdown, so admins can introduce a
+    # brand-new type on the spot (it then joins the list for everyone).
+    rtype = request.form.get("custom_type", "").strip() or request.form.get("return_type", "")
+    get_store().set_project_type(request.form["pkey"], rtype)
     return redirect(url_for("projects",
                              pkey=request.form["pkey"],
                              filter=request.form.get("filter", "All"),

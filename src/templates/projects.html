@@ -9,8 +9,8 @@
     <div class="kpi-label">Open returns</div>
   </div>
   <div class="kpi-card">
-    <div class="kpi-value" style="color:var(--text)">{{ totals.open_individual }}</div>
-    <div class="kpi-label">Individual</div>
+    <div class="kpi-value" style="color:var(--text)">{{ totals.completed_total }}</div>
+    <div class="kpi-label">Completed</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-value" style="color:var(--warn)">{{ totals.docs_outstanding }}</div>
@@ -20,9 +20,10 @@
 
 <div class="chips" style="justify-content:space-between">
   <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center">
-    {% for name in ['All','Individual','Business','Unclassified'] %}
-    {# Type chips always clickable. In completed mode a click exits completed
-       (done=0) and applies the filter — one click, no double-click needed. #}
+    {# Type chips are built from the specific types in the data (plus "All"), so
+       new types appear here automatically. In completed mode a click exits
+       completed (done=0) and applies the filter — one click, no double-click. #}
+    {% for name in ['All'] + type_chips %}
     <a class="chip {{ 'active' if filter_type == name and not show_done }}"
        href="{{ url_for('projects', filter=name, done='0') }}">
       {{ name }}{% if not show_done %} ({{ counts.get(name, 0) }}){% endif %}
@@ -97,17 +98,20 @@
     </p>
 
     <div class="row mb-2">
-      <form method="post" action="{{ url_for('project_type') }}" style="display:flex;gap:8px;align-items:center">
+      <form method="post" action="{{ url_for('project_type') }}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="pkey" value="{{ selected.project_key }}">
         <input type="hidden" name="filter" value="{{ filter_type }}">
         <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
         <label style="margin-bottom:0;text-transform:none;font-size:12px;font-weight:600">Return type:</label>
-        <select name="return_type" onchange="this.form.submit()">
-          {% for rt in return_types %}
+        <select name="return_type">
+          {% for rt in all_types %}
           <option {{ 'selected' if selected.return_type == rt }}>{{ rt }}</option>
           {% endfor %}
         </select>
+        <input type="text" name="custom_type" placeholder="or type a new one"
+               style="width:150px;font-size:12px;padding:6px 9px">
+        <button type="submit" class="btn btn-secondary btn-sm">Save type</button>
       </form>
 
       <form method="post" action="{{ url_for('project_complete') }}">

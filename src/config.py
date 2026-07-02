@@ -45,26 +45,25 @@ LOGICAL_FIELDS = [
 ]
 REQUIRED_FIELDS = [name for name, _label, req in LOGICAL_FIELDS if req]
 
-# Keyword rules to auto-classify a return as Individual vs Business from a
-# "return type" column. Anything unmatched stays Unclassified until the user
-# sets it manually. (Order: check Individual first.)
+# The label used when a document/return has no type in the data.
+UNCLASSIFIED = "Unclassified"
+
+# Legacy: the old fixed Individual/Business buckets. Kept only because the
+# legacy desktop UI (src/ui/projects_view.py) still imports it. The web app no
+# longer buckets — it classifies by the specific type from the data (below).
 RETURN_TYPES = ["Individual", "Business", "Unclassified"]
-_RETURN_TYPE_HINTS = {
-    "Individual": ["1040", "individual", "personal", "schedule c only"],
-    "Business": ["1120", "1065", "1120s", "1120-s", "business", "corp", "corporation",
-                 "partnership", "s-corp", "scorp", "llc", "company"],
-}
 
 
-def classify_return_type(raw: str | None) -> str:
-    """Best-effort Individual/Business classification from a raw type string."""
-    if not raw:
-        return "Unclassified"
-    low = str(raw).lower()
-    for rtype in ("Individual", "Business"):
-        if any(hint in low for hint in _RETURN_TYPE_HINTS[rtype]):
-            return rtype
-    return "Unclassified"
+def normalize_return_type(raw: str | None) -> str:
+    """The document/return type, kept as specific as the data allows.
+
+    We use the exact value from the mapped "return type" column, just trimmed —
+    e.g. "Tax: 1040", "Accounting/Bookkeeping", "Tax: 1120S (S-Corp)". Brand-new
+    types appear automatically the moment they show up in an import; nothing has
+    to be pre-registered. Blank -> "Unclassified".
+    """
+    s = ("" if raw is None else str(raw)).strip()
+    return s or UNCLASSIFIED
 
 # Default overdue threshold in days (the user can change this live in Settings).
 DEFAULT_OVERDUE_DAYS = 14

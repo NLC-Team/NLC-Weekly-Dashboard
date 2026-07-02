@@ -194,9 +194,14 @@ class Store:
         return cur.lastrowid
 
     def upsert_items(self, pending_records: list[dict], today: date) -> dict:
-        """Insert/update pending items and mark vanished ones as resolved.
+        """Insert new items and update existing ones (matched by item_key).
 
-        Returns a small stats dict: {new, updated, resolved}.
+        Imports are ADDITIVE: items from earlier imports are kept even when a
+        new file doesn't contain them, so importing a different/partial export
+        (e.g. a bookkeeping list) never wipes previously-loaded data. Remove
+        items you no longer want with the Delete-client / delete-return tools.
+
+        Returns a small stats dict: {new, updated}.
 
         Existing keys are fetched once up front and inserts/updates are batched
         with executemany, so an N-row import runs a handful of statements rather
@@ -241,15 +246,11 @@ class Store:
                 updates,
             )
 
-        # Anything still marked active but not seen in this import is now resolved.
-        cur = self.conn.execute(
-            "UPDATE items SET resolved=1, resolved_at=? WHERE resolved=0 AND last_seen<>?",
-            (iso, iso),
-        )
-        resolved = cur.rowcount
+        # Additive by design: items absent from this import are left untouched
+        # (still active), so a new or partial file never wipes prior data.
         self.conn.commit()
         self._bump()
-        return {"new": len(inserts), "updated": len(updates), "resolved": resolved}
+        return {"new": len(inserts), "updated": len(updates)}
 
     def active_items(self) -> list[dict]:
         """Current pending items (latest import, not resolved), with history.
