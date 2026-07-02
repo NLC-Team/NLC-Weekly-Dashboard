@@ -82,16 +82,18 @@ def send_email(cfg: dict, to: str, subject: str, body: str) -> tuple[bool, str]:
         return False, f"Could not send email: {e}"
 
 
-def send_verification_code(cfg: dict, to_email: str, name: str, code: str) -> tuple[bool, str]:
+def send_signup_notification(cfg: dict, to, applicant_name: str,
+                             applicant_email: str) -> tuple[bool, str]:
+    """Tell the admin(s) that someone requested access. `to` may be a single
+    address or a comma-joined list of admin addresses."""
     body = (
-        f"Hi {name or 'there'},\n\n"
-        "Someone requested access to the NLC Financial Dashboard with this email address.\n\n"
-        f"Your verification code is:  {code}\n\n"
-        "Enter this code on the verification screen to confirm your email. After that, an "
-        "administrator will approve your account before you can sign in.\n\n"
-        "This code expires in 24 hours. If you didn't request this, you can ignore this email.\n"
+        "Someone requested access to the NLC Financial Dashboard:\n\n"
+        f"    Name:   {applicant_name or '(not given)'}\n"
+        f"    Email:  {applicant_email}\n\n"
+        "They're waiting in the Staff page's pending queue. Sign in and open Staff & Roles "
+        "to approve them with a role (Viewer, Manager or Admin) or reject the request.\n"
     )
-    return send_email(cfg, to_email, "Your NLC Financial Dashboard verification code", body)
+    return send_email(cfg, to, "New NLC Financial Dashboard access request", body)
 
 
 def send_test(cfg: dict, to_email: str) -> tuple[bool, str]:

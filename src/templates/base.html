@@ -54,6 +54,8 @@ h2{font-size:17px;font-weight:700;color:var(--text);margin-bottom:12px}
 .kpi-3{grid-template-columns:repeat(3,1fr)}
 .kpi-4{grid-template-columns:repeat(4,1fr)}
 .kpi-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px 24px}
+/* Overdue KPI when >0: a subtle left accent stripe, not a full red card. */
+.kpi-alert{border-left:4px solid var(--danger);padding-left:20px}
 .kpi-value{font-size:34px;font-weight:800;line-height:1.1}
 .kpi-label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-top:5px}
 
@@ -78,7 +80,7 @@ tr.selected td{background:var(--accent-light)!important}
 .btn-sm{padding:5px 12px;font-size:11px}
 
 /* Forms */
-input[type=text],input[type=number],select,textarea{
+input[type=text],input[type=number],input[type=email],select,textarea{
   padding:7px 11px;border:1px solid var(--border);border-radius:7px;
   font-size:12px;font-family:inherit;background:white;color:var(--text);
   transition:border-color .12s,box-shadow .12s}
@@ -184,7 +186,10 @@ label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase
   <a href="{{ url_for('person') }}"    class="{{ 'active' if request.endpoint == 'person' }}">Staff &#8211; Clients</a>
   <a href="{{ url_for('overdue') }}"   class="{{ 'active' if request.endpoint == 'overdue' }}">Overdue</a>
   {% if current_role == 'Admin' %}
-  <a href="{{ url_for('staff') }}"     class="{{ 'active' if request.endpoint == 'staff' }}">Staff &amp; Roles</a>
+  <a href="{{ url_for('staff') }}"     class="{{ 'active' if request.endpoint == 'staff' }}">Staff &amp; Roles
+    {% if pending_count %}<span title="{{ pending_count }} access request(s) awaiting approval"
+      style="display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;background:#dc2626;color:#fff;
+             border-radius:9px;font-size:11px;font-weight:700;text-align:center;line-height:18px">{{ pending_count }}</span>{% endif %}</a>
   <a href="{{ url_for('import_view') }}" class="{{ 'active' if request.endpoint in ('import_view','import_upload','import_run') }}">Import</a>
   <a href="{{ url_for('settings') }}"  class="{{ 'active' if request.endpoint == 'settings' }}">Settings</a>
   <a href="{{ url_for('clients') }}"   class="{{ 'active' if request.endpoint == 'clients' }}" style="color:#fca5a5">Delete Clients</a>
@@ -198,13 +203,21 @@ label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase
       <span class="badge {{ 'badge-admin' if current_role == 'Admin' else ('badge-manager' if current_role == 'Manager' else 'badge-viewer') }}">{{ current_role or 'No role' }}</span>
     </div>
     <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
-      <a href="{{ url_for('account_password') }}" style="font-size:11px;color:#aebfd6;text-decoration:none">Change password</a>
+      <a href="{{ url_for('account_password') }}" style="font-size:11px;color:#aebfd6;text-decoration:none">My account</a>
       <a href="{{ url_for('logout') }}" class="btn btn-sm"
          style="background:#1a2e47;color:#e2eaf5;justify-content:center;text-decoration:none">Log out</a>
     </div>
   </div>
 </nav>
 <main class="main">
+  {% if pending_count and request.endpoint != 'staff' %}
+  <a href="{{ url_for('staff') }}" style="display:block;text-decoration:none;margin-bottom:16px;
+       background:#fef2f2;border:1px solid var(--danger-border);border-radius:8px;padding:11px 14px;
+       color:var(--danger);font-size:13px;font-weight:600">
+    🔔 {{ pending_count }} new access request{{ 's' if pending_count != 1 }} awaiting your approval —
+    <span style="text-decoration:underline">review in Staff &amp; Roles</span>
+  </a>
+  {% endif %}
   {% block content %}{% endblock %}
 </main>
 </body>

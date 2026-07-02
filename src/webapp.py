@@ -50,9 +50,9 @@ app.secret_key = config.get_or_create_secret_key()
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,      # JS can't read the session cookie
     SESSION_COOKIE_SAMESITE="Lax",     # mitigates cross-site request abuse
-    # "Keep me signed in" makes the session permanent for this long; without it
-    # the cookie is a browser-session cookie that clears when the browser closes.
-    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    # "Remember me" makes the session permanent for this long; without it the
+    # cookie is a browser-session cookie that clears when the browser closes.
+    PERMANENT_SESSION_LIFETIME=timedelta(days=7),
 )
 
 # ---- Global singleton store (single-user local app) ----------------------
@@ -139,14 +139,10 @@ def _clear_fails(username: str) -> None:
     _FAILED_LOGINS.pop(username, None)
 
 
+# ---- Password helpers -----------------------------------------------------
+
 def _valid_password(pw) -> bool:
     return isinstance(pw, str) and len(pw) >= 8
-
-
-def _valid_username(u) -> bool:
-    """3-30 chars, letters/digits/._- only (so it's clearly not an email)."""
-    import re
-    return bool(isinstance(u, str) and re.fullmatch(r"[A-Za-z0-9._-]{3,30}", u))
 
 
 def _hash_password(pw: str) -> str:
@@ -155,34 +151,33 @@ def _hash_password(pw: str) -> str:
     return generate_password_hash(pw, method="pbkdf2:sha256")
 
 
-# ---- Email verification helpers ------------------------------------------
-
-VERIFY_TTL_HOURS = 24
-
-
-def _new_code() -> str:
-    """A 6-digit verification code (entered on the verify screen)."""
-    return f"{secrets.randbelow(1000000):06d}"
-
-
-def _code_expired(sent_at: str | None) -> bool:
-    if not sent_at:
-        return True
-    try:
-        return datetime.now() - datetime.fromisoformat(sent_at) > timedelta(hours=VERIFY_TTL_HOURS)
-    except ValueError:
-        return True
-
-
 def _mail_config() -> dict:
     return mailer.merged_config(get_store().get_setting("mail_config", {}))
 
 
-def _send_verification(acct: dict) -> tuple[bool, str]:
-    """Generate + store a fresh code for `acct` and email it. Returns (ok, err)."""
-    code = _new_code()
-    get_store().set_verify_code(acct["name"], code, datetime.now().isoformat(timespec="seconds"))
-    return mailer.send_verification_code(_mail_config(), acct["email"], acct["name"], code)
+def _pending_count() -> int:
+    """How many sign-up requests are awaiting an admin's approval."""
+    return len(get_store().list_pending())
+
+
+def _admin_emails() -> list[str]:
+    """Sign-in emails of every active admin (for access-request notifications)."""
+    return [m["email"] for m in get_store().get_staff()
+            if m["role"] == "Admin" and m["email"]]
+
+
+def _notify_admins_of_signup(name: str, email: str) -> None:
+    """Email all admins that someone requested access. Best-effort: a mail
+    failure must never block the sign-up (the request still lands in the queue)."""
+    admins = _admin_emails()
+    if not admins:
+        logging.warning("New access request from %s <%s> but no admin email is on file.",
+                        name, email)
+        return
+    ok, err = mailer.send_signup_notification(_mail_config(), ", ".join(admins), name, email)
+    if not ok:
+        logging.warning("Could not notify admins of access request from %s <%s>: %s",
+                        name, email, err)
 
 
 def _safe_next(target: str) -> str:
@@ -197,12 +192,16 @@ def _inject_user():
     """Make the current user/role, staff list and CSRF token available to
     every template (all now driven by the logged-in session user)."""
     acct = _current_account()
+    is_admin = bool(acct and acct["role"] == "Admin")
     return {
         "current_user": acct["name"] if acct else "",
         "current_username": acct["username"] if acct else "",
         "current_role": acct["role"] if acct else "",
         "all_staff": get_store().get_staff(),
         "csrf_token": _csrf_token(),
+        # Admins are alerted to new sign-up requests in-app (a badge on the Staff
+        # menu + a banner), since outbound email can't be relied on here.
+        "pending_count": _pending_count() if is_admin else 0,
     }
 
 
@@ -244,7 +243,7 @@ def manager_required(fn):
 
 # ---- Global request gate: CSRF + authentication ---------------------------
 
-_PUBLIC_ENDPOINTS = {"login", "signup", "logout", "setup", "verify", "static"}
+_PUBLIC_ENDPOINTS = {"login", "signup", "logout", "setup", "static"}
 
 
 @app.before_request
@@ -449,8 +448,7 @@ def _workload_chart_cached(per_assignee: list) -> str | None:
 @app.route("/setup", methods=["GET", "POST"])
 def setup():
     """First-run bootstrap: create the very first Admin. Reachable only while
-    no active admin exists; closed off (redirects to login) afterwards. The
-    first admin is auto-verified/active so they can then configure email."""
+    no active admin exists; closed off (redirects to login) afterwards."""
     if not _needs_setup():
         return redirect(url_for("login"))
     error = ""
@@ -464,53 +462,58 @@ def setup():
             error = f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address."
         elif not _valid_password(password):
             error = "Password must be at least 8 characters."
+        elif (owner := get_store().get_account_by_email(email)) and owner["name"] != name:
+            error = "That email is already used by another account."
         else:
             try:
                 get_store().create_account(name, "Admin", _hash_password(password), "active",
                                            email=email, email_verified=1, today=date.today())
-                session.clear()
-                session["auth_user"] = name
-                session.permanent = True
-                return redirect(url_for("overview"))
             except sqlite3.IntegrityError:
-                error = "That name or email is already in use."
+                # First-run with a leftover account of the same name (e.g. an
+                # email-less admin from an earlier version). No usable admin
+                # exists yet, so claim that row as this new admin.
+                get_store().set_login(name, email, _hash_password(password))
+                get_store().upsert_staff(name, "Admin", date.today())  # ensure Admin role
+            session.clear()
+            session["auth_user"] = name
+            session.permanent = True
+            return redirect(url_for("overview"))
     return render_template("setup.html", error=error)
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    """Sign in with your @company email + the password you chose at sign-up.
+    An account must be approved by an admin before it can sign in."""
     if _current_account():
         return redirect(url_for("overview"))
+    email = ""
+    nxt = request.values.get("next", "")
     error = ""
-    unverified_email = ""
+
     if request.method == "POST":
-        login_id = request.form.get("email", "").strip()
+        email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
-        if _too_many_fails(login_id.lower()):
+        remember = request.form.get("remember") == "on"
+        if _too_many_fails(email):
             error = "Too many failed attempts. Please wait a few minutes and try again."
         else:
-            acct = get_store().get_account_by_login(login_id)
+            acct = get_store().get_account_by_email(email)
             pw_ok = bool(acct and acct["password_hash"]
                          and check_password_hash(acct["password_hash"], password))
             if not pw_ok:
-                _record_fail(login_id.lower())
-                error = "Invalid email/username or password."  # generic: no user enumeration
-            elif not acct["email_verified"]:
-                # Password is right, so it's safe to be specific and helpful here.
-                unverified_email = acct["email"] or ""
-                error = "Your email isn't verified yet. Please verify it to continue."
+                _record_fail(email)
+                error = "Invalid email or password."  # generic: no user enumeration
             elif acct["status"] != "active":
                 error = "Your account is awaiting administrator approval."
             else:
-                _clear_fails(login_id.lower())
-                remember = request.form.get("remember") == "on"
+                _clear_fails(email)
                 session.clear()  # fresh session on login (prevents fixation)
                 session["auth_user"] = acct["name"]
-                # Keep me signed in: permanent cookie (30 days). Otherwise a
-                # browser-session cookie that clears when the browser closes.
-                session.permanent = remember
-                return redirect(_safe_next(request.args.get("next", "")))
-    return render_template("login.html", error=error, unverified_email=unverified_email)
+                session.permanent = remember  # Remember me -> 7-day cookie
+                return redirect(_safe_next(nxt))
+
+    return render_template("login.html", email=email, next=nxt, error=error)
 
 
 @app.route("/logout")
@@ -521,96 +524,51 @@ def logout():
 
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
-    """Self sign-up: company-domain email + password creates a PENDING,
-    UNVERIFIED account and emails a verification code. The user verifies, then
-    an admin approves, before they can sign in."""
+    """Self sign-up: name + company email + a password you choose creates a
+    PENDING account. Admins are alerted (in-app + best-effort email); once an
+    admin approves it, you can sign in with your email + password."""
     if _current_account():
         return redirect(url_for("overview"))
     error = ""
+    done = False
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         email = request.form.get("email", "").strip().lower()
-        username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
-        if not name or not email or not username:
-            error = "Please enter your name, email and a username."
+        confirm = request.form.get("confirm", "")
+        if not name or not email:
+            error = "Please enter your name and email."
         elif not config.is_allowed_email(email):
             error = f"Access is limited to @{config.ALLOWED_EMAIL_DOMAIN} email addresses."
-        elif not _valid_username(username):
-            error = "Username must be 3-30 characters: letters, numbers, dot, underscore or hyphen."
         elif not _valid_password(password):
             error = "Password must be at least 8 characters."
+        elif password != confirm:
+            error = "The two passwords don't match."
         elif get_store().get_account_by_email(email):
-            error = "An account with that email already exists."
-        elif get_store().get_account_by_username(username):
-            error = "That username is already taken."
+            error = "An account with that email already exists — try signing in."
         else:
             try:
                 get_store().create_account(name, "Viewer", _hash_password(password), "pending",
-                                           email=email, username=username,
-                                           email_verified=0, today=date.today())
+                                           email=email, email_verified=0, today=date.today())
             except sqlite3.IntegrityError:
                 return render_template("signup.html",
-                                       error="That name, username or email is already in use.")
-            acct = get_store().get_account_by_email(email)
-            ok, err = _send_verification(acct)
-            # Either way the account exists; send them to the verify screen.
-            return redirect(url_for("verify", email=email, sent=("1" if ok else "0"),
-                                    err=("" if ok else err)))
-    return render_template("signup.html", error=error)
+                                       error="That name or email is already in use.")
+            # Best-effort admin heads-up; the reliable alert is the in-app
+            # pending badge/banner, so a mail failure never matters here.
+            _notify_admins_of_signup(name, email)
+            done = True
+    return render_template("signup.html", error=error, done=done)
 
 
-@app.route("/verify", methods=["GET", "POST"])
-def verify():
-    """Confirm ownership of the email by entering the 6-digit code we sent."""
-    if _current_account():
-        return redirect(url_for("overview"))
-    email = (request.values.get("email", "") or "").strip().lower()
-    error = ""
-    info = ""
-    done = False
-
-    if request.args.get("sent") == "1":
-        info = "We emailed you a 6-digit verification code. Enter it below."
-    elif request.args.get("sent") == "0":
-        error = ("We couldn't send the verification email. "
-                 + (request.args.get("err", "") or "Ask an administrator to check mail settings."))
-
-    if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
-        acct = get_store().get_account_by_email(email)
-        if request.form.get("action") == "resend":
-            if acct and not acct["email_verified"]:
-                ok, err = _send_verification(acct)
-                info = "A new code has been sent." if ok else ""
-                error = "" if ok else ("Couldn't resend: " + err)
-            else:
-                error = "Nothing to resend for that email."
-        else:
-            code = request.form.get("code", "").strip()
-            if not acct:
-                error = "No pending account for that email."
-            elif acct["email_verified"]:
-                done = True
-                info = "This email is already verified."
-            elif _code_expired(acct["verify_sent_at"]):
-                error = "That code has expired. Request a new one below."
-            elif not acct["verify_code"] or code != acct["verify_code"]:
-                error = "That code is incorrect."
-            else:
-                get_store().mark_email_verified(acct["name"])
-                done = True
-    return render_template("verify.html", email=email, error=error, info=info, done=done)
-
-
-@app.route("/account/password", methods=["GET", "POST"])
+@app.route("/account", methods=["GET", "POST"])
 @login_required
 def account_password():
+    """Manage your own account: the email you sign in with and your password."""
     acct = _current_account()
     error = ""
     msg = ""
     if request.method == "POST":
-        # Optional: set/update the email used to sign in.
+        # Optional: change the email used to sign in.
         new_email = request.form.get("email", "").strip().lower()
         if new_email and new_email != (acct["email"] or "").lower():
             if not config.is_allowed_email(new_email):
@@ -621,7 +579,7 @@ def account_password():
                     error = "That email is already used by another account."
                 else:
                     get_store().set_email(acct["name"], new_email)
-                    msg = "Email updated."
+                    msg = "Sign-in email updated."
                     acct = _current_account()
 
         # Password change (only if the fields were filled in).
@@ -647,12 +605,10 @@ def account_password():
 @login_required
 def overview():
     data = _get_data()
-    li = get_store().last_import()
     age_dist = data["age_distribution"]
     max_age_count = max((d[1] for d in age_dist), default=1) or 1
     return render_template("overview.html",
                            data=data,
-                           last_import=li,
                            overdue_days=_overdue_days(),
                            workload_img=_workload_chart_cached(data["per_assignee"]),
                            age_dist=age_dist,
@@ -825,8 +781,9 @@ def staff():
 @app.route("/staff/add", methods=["POST"])
 @admin_required
 def staff_add():
-    """Admin adds a member directly. Admin-created accounts are active and
-    email-verified immediately (the admin vouches for them)."""
+    """Admin adds a member directly. Admin-created accounts are active
+    immediately (the admin vouches for them); the admin sets an initial password
+    to give the person, who can then change it."""
     name = request.form.get("name", "").strip()
     email = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
@@ -837,13 +794,15 @@ def staff_add():
         return redirect(url_for("staff",
                                 msg=f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address.", mt="err"))
     if not _valid_password(password):
-        return redirect(url_for("staff", msg="Password must be at least 8 characters.", mt="err"))
+        return redirect(url_for("staff", msg="Set an initial password of at least 8 characters.", mt="err"))
     try:
         get_store().create_account(name, role, _hash_password(password), "active",
                                    email=email, email_verified=1, today=date.today())
     except sqlite3.IntegrityError:
         return redirect(url_for("staff", msg="That name or email is already in use.", mt="err"))
-    return redirect(url_for("staff", msg=f"{name} added as {role}.", mt="ok"))
+    return redirect(url_for("staff",
+                            msg=f"{name} added as {role}. Give them the password you just set.",
+                            mt="ok"))
 
 
 @app.route("/staff/remove", methods=["POST"])
@@ -878,7 +837,8 @@ def staff_role():
 @app.route("/staff/reset", methods=["POST"])
 @admin_required
 def staff_reset():
-    """Set or reset a member's login (email + password), keyed by name."""
+    """Set or reset a member's login (email + password), keyed by name. Use this
+    to give someone a new password to sign in with."""
     name = request.form.get("name", "")
     email = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "")
@@ -896,7 +856,7 @@ def staff_reset():
         get_store().set_login(name, email, _hash_password(password))
     except sqlite3.IntegrityError:
         return redirect(url_for("staff", msg="That email is already in use.", mt="err"))
-    return redirect(url_for("staff", msg=f"Login updated for {name}.", mt="ok"))
+    return redirect(url_for("staff", msg=f"Login updated for {name}. Give them the new password.", mt="ok"))
 
 
 @app.route("/staff/approve", methods=["POST"])
@@ -920,20 +880,6 @@ def staff_reject():
         get_store().remove_staff(name)
         return redirect(url_for("staff", msg="Sign-up request rejected.", mt="ok"))
     return redirect(url_for("staff"))
-
-
-@app.route("/staff/resend", methods=["POST"])
-@admin_required
-def staff_resend():
-    """Admin re-sends a verification code to a pending, unverified account."""
-    name = request.form.get("name", "")
-    acct = get_store().get_account_by_name(name)
-    if not acct or acct["email_verified"] or not acct["email"]:
-        return redirect(url_for("staff", msg="Nothing to resend for that account.", mt="err"))
-    ok, err = _send_verification(acct)
-    if ok:
-        return redirect(url_for("staff", msg=f"Verification code re-sent to {acct['email']}.", mt="ok"))
-    return redirect(url_for("staff", msg=f"Couldn't send: {err}", mt="err"))
 
 
 @app.route("/settings")

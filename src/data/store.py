@@ -468,7 +468,7 @@ class Store:
                 for r in rows]
 
     def count_active_admins(self) -> int:
-        """Admins who can actually log in (active + have a password)."""
+        """Admins who can actually sign in (active + have a password)."""
         r = self.conn.execute(
             "SELECT COUNT(*) FROM staff WHERE role='Admin' AND status='active' "
             "AND password_hash IS NOT NULL AND password_hash != ''"

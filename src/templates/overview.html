@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Team overview</h1>
-{% if last_import %}
-<p class="subtitle">Last import: <strong>{{ last_import.file_name }}</strong> on {{ last_import.imported_at }} &nbsp;·&nbsp; overdue = more than {{ overdue_days }} days open</p>
+{% if data.per_assignee %}
+<p class="subtitle">Overdue = more than {{ overdue_days }} days open.</p>
 {% else %}
 <p class="subtitle">No data imported yet — go to <a href="{{ url_for('import_view') }}">Import</a> to load a CSV export.</p>
 {% endif %}
@@ -12,9 +12,9 @@
     <div class="kpi-value text-accent">{{ data.totals.total_pending }}</div>
     <div class="kpi-label">Pending documents</div>
   </div>
-  <div class="kpi-card">
+  <div class="kpi-card{% if data.totals.total_overdue %} kpi-alert{% endif %}">
     <div class="kpi-value text-danger">{{ data.totals.total_overdue }}</div>
-    <div class="kpi-label">Overdue</div>
+    <div class="kpi-label" style="color:var(--danger)">⚠ Overdue</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-value" style="color:var(--text)">{{ data.totals.staff_count }}</div>

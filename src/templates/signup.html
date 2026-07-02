@@ -2,8 +2,16 @@
 {% block title %}Request access — NLC Financial Dashboard{% endblock %}
 {% block auth %}
 <h1>Request access</h1>
-<p class="sub">Sign up with your company email. We'll email you a code to verify it,
-then an administrator will approve your account before you can sign in.</p>
+
+{% if done %}
+<div class="msg msg-ok">
+  Thanks — your request has been sent. An administrator will review it, and once
+  you're approved you can sign in with your email and password.
+</div>
+<div class="auth-foot"><a href="{{ url_for('login') }}">Back to sign in</a></div>
+{% else %}
+<p class="sub">Sign up with your company email and choose a password. An administrator
+approves your account before you can sign in.</p>
 
 {% if error %}<div class="msg msg-err">{{ error }}</div>{% endif %}
 
@@ -12,21 +20,19 @@ then an administrator will approve your account before you can sign in.</p>
   <label for="name">Full name</label>
   <input type="text" id="name" name="name" autocomplete="name" autofocus required>
   <label for="email">Work email</label>
-  <input type="text" id="email" name="email" autocomplete="email"
+  <input type="email" id="email" name="email" autocomplete="email"
          placeholder="you@nlcfcpa.com" required>
-  <p class="hint">Must be a @nlcfcpa.com address.</p>
-  <label for="username">Choose a username</label>
-  <input type="text" id="username" name="username" autocomplete="username"
-         placeholder="e.g. sjohnson" required>
-  <p class="hint">3-30 characters — letters, numbers, dot, underscore or hyphen. You'll sign in with this or your email.</p>
-  <label for="password">Password</label>
+  <p class="hint">Must be a @nlcfcpa.com address — you'll sign in with this.</p>
+  <label for="password">Choose a password</label>
   <input type="password" id="password" name="password" autocomplete="new-password" required>
   <p class="hint">At least 8 characters.</p>
+  <label for="confirm">Confirm password</label>
+  <input type="password" id="confirm" name="confirm" autocomplete="new-password" required>
   <button type="submit" class="btn">Request access</button>
 </form>
 
 <div class="auth-foot">
   Already have an account? <a href="{{ url_for('login') }}">Sign in</a>
-  &nbsp;·&nbsp; <a href="{{ url_for('verify') }}">Enter a verification code</a>
 </div>
+{% endif %}
 {% endblock %}
