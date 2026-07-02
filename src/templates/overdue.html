@@ -12,7 +12,7 @@
   <div class="banner-warn-title">Action needed — longest-waiting items per person:</div>
   {% for person, items in ranked %}
   <div class="banner-item">
-    • <strong>{{ person }}</strong>: {{ items|length }} overdue — longest wait: <strong>{{ worst[person].client }}</strong> ({{ worst[person].age_days }} days)
+    • <a href="{{ url_for('overdue', person=person) }}" style="color:inherit"><strong>{{ person }}</strong></a>: {{ items|length }} overdue — longest wait: <strong>{{ worst[person].client }}</strong> ({{ worst[person].age_days }} days)
   </div>
   {% endfor %}
 </div>
@@ -21,9 +21,9 @@
 <div class="row mb-2" style="gap:10px;align-items:center">
   <label style="margin-bottom:0">Staff member</label>
   <select id="staffPicker" onchange="filterStaff(this.value)" style="min-width:240px">
-    <option value="__all__">All staff ({{ overdue_items|length }})</option>
+    <option value="__all__" {{ 'selected' if not selected_person }}>All staff ({{ overdue_items|length }})</option>
     {% for person, items in ranked %}
-    <option value="{{ person }}">{{ person }} ({{ items|length }})</option>
+    <option value="{{ person }}" {{ 'selected' if person == selected_person }}>{{ person }} ({{ items|length }})</option>
     {% endfor %}
   </select>
 </div>
@@ -40,10 +40,10 @@
       </tr>
     </thead>
     {% for person, items in ranked %}
-    <tbody class="staff-group" data-person="{{ person }}">
+    <tbody class="staff-group" data-person="{{ person }}"{% if selected_person and person != selected_person %} style="display:none"{% endif %}>
       <tr class="group-head">
         <td colspan="5" style="background:var(--bg);font-weight:800;color:var(--text);padding:12px 14px">
-          <a href="{{ url_for('person', name=person) }}" style="color:var(--text);text-decoration:none">{{ person }}</a>
+          <a href="{{ url_for('overdue', person=person) }}" style="color:var(--text);text-decoration:none">{{ person }}</a>
           <span class="text-muted" style="font-weight:600;font-size:12px"> — {{ items|length }} overdue</span>
         </td>
       </tr>

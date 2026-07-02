@@ -13,6 +13,7 @@ helpers below assume that enrichment has already happened.
 """
 from __future__ import annotations
 
+from collections import Counter
 from datetime import date
 from typing import Iterable
 
@@ -71,6 +72,8 @@ def per_assignee(items: list[dict]) -> list[dict]:
     for assignee, group in groups.items():
         ages = [it["age_days"] for it in group]
         oldest = max(group, key=lambda x: x["age_days"]) if group else None
+        # How many of each specific statement type make up this person's workload.
+        type_counts = Counter(normalize_return_type(it.get("return_type_raw")) for it in group)
         rows.append(
             {
                 "assignee": assignee,
@@ -79,6 +82,8 @@ def per_assignee(items: list[dict]) -> list[dict]:
                 "avg_age": round(sum(ages) / len(ages)) if ages else 0,
                 "max_age": max(ages) if ages else 0,
                 "oldest_client": oldest["client"] if oldest else "",
+                # [(type, count), ...] most common first, for the workload table.
+                "type_breakdown": type_counts.most_common(),
             }
         )
 
@@ -134,11 +139,36 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
 
         client = next((d["client"] for d in docs if d["client"]), "(no client)")
         days_open = max((d["age_days"] for d in docs), default=0)
+
+        # Responsible employee(s): a return can span docs owned by different
+        # staff, so keep the full de-duplicated list plus a compact label. The
+        # importer stores a missing assignee as the literal "(unassigned)"
+        # (importer.py), so treat that as unassigned too and normalize to a
+        # single "Unassigned" label (rendered as plain text, never a link).
+        assignees = sorted({a for d in docs
+                            for a in [(d.get("assignee") or "").strip()]
+                            if a and a.lower() != "(unassigned)"})
+        if not assignees:
+            assignees = ["Unassigned"]
+        assignee_label = (", ".join(assignees) if len(assignees) <= 2
+                          else f"{assignees[0]} +{len(assignees) - 1}")
+
+        # When the return "opened": earliest real date across its docs (the CSV
+        # date if present, else when we first saw it), mirroring item_age_days.
+        opened_dates = [d.get("source_date") or d.get("first_seen")
+                        for d in docs if (d.get("source_date") or d.get("first_seen"))]
+        opened_on = min(opened_dates) if opened_dates else None
+
         projects.append(
             {
                 "project_key": pkey,
                 "client": client,
                 "return_type": rtype,
+                "assignees": assignees,
+                "assignee_label": assignee_label,
+                "opened_on": opened_on,
+                "opened_year": opened_on.year if opened_on else None,
+                "opened_month": opened_on.month if opened_on else None,
                 "completed": completed,
                 "open": not completed,
                 "documents": doc_rows,

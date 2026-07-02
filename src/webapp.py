@@ -357,48 +357,73 @@ def _style_ax(ax, title: str):
     ax.set_facecolor("white")
 
 
-def _workload_chart(per_assignee: list) -> str | None:
+def _workload_chart(overdue_items: list) -> str | None:
+    """Overdue statements per employee, STACKED by the specific statement type
+    that makes up each column (e.g. Tax: 1040, Accounting/Bookkeeping). One
+    column per employee who has overdue work, worst-first; each coloured segment
+    is that type's count, a legend maps colour -> type, and the grand total sits
+    on top. Lets you see how many of what each person is behind on."""
     try:
-        top = per_assignee[:8]
-        if not top:
+        from collections import Counter
+
+        if not overdue_items:
             return None
 
-        # Most overdue staff on the left — that's who needs attention first.
-        ordered = sorted(top, key=lambda r: (r["overdue_count"], r["pending_count"]), reverse=True)
+        # Per employee -> Counter of {statement type: overdue count}.
+        by_person: dict[str, Counter] = {}
+        overall = Counter()
+        for it in overdue_items:
+            who = (it.get("assignee") or "").strip() or "Unassigned"
+            if who.lower() == "(unassigned)":
+                who = "Unassigned"
+            t = config.normalize_return_type(it.get("return_type_raw"))
+            by_person.setdefault(who, Counter())[t] += 1
+            overall[t] += 1
+        if not by_person:
+            return None
 
-        labels = [r["assignee"] for r in ordered]  # full names, no truncation
-        pending = [r["pending_count"] for r in ordered]
-        overdue = [r["overdue_count"] for r in ordered]
-        n = len(labels)
+        # Employees worst-first; statement types most-common-first (stable colours).
+        people = sorted(by_person, key=lambda p: sum(by_person[p].values()), reverse=True)
+        types = [t for t, _ in overall.most_common()]
+        palette = ["#dc2626", "#2563eb", "#d97706", "#059669", "#7c3aed",
+                   "#0891b2", "#db2777", "#65a30d", "#c2410c", "#4b5563"]
+        colors = {t: palette[i % len(palette)] for i, t in enumerate(types)}
+
+        n = len(people)
         x = list(range(n))
-        w = 0.38  # each column; O left, P right within each group
+        totals = [sum(by_person[p].values()) for p in people]
+        ymax = max(totals + [1])
 
-        # Width scales with the number of staff so columns stay readable.
-        fig_w = max(6.0, n * 0.95)
-        fig = Figure(figsize=(fig_w, 4.2), facecolor="white")
+        fig_w = max(6.5, n * 0.9)
+        fig = Figure(figsize=(fig_w, 4.6), facecolor="white")
         ax = fig.add_subplot(111)
 
-        # Charcoal for O (overdue, left), amber for P (pending, right).
-        bars_o = ax.bar([xi - w / 2 for xi in x], overdue, width=w,
-                        label="Overdue", color="#374151", zorder=3, linewidth=0)
-        bars_p = ax.bar([xi + w / 2 for xi in x], pending, width=w,
-                        label="Pending", color="#d97706", zorder=3, linewidth=0)
+        bottoms = [0] * n
+        for t in types:
+            vals = [by_person[p].get(t, 0) for p in people]
+            ax.bar(x, vals, bottom=bottoms, width=0.62, color=colors[t],
+                   label=t, zorder=3, linewidth=0)
+            # Count inside each segment that's tall enough to hold the text.
+            for xi, v, b in zip(x, vals, bottoms):
+                if v > 0 and v / ymax >= 0.045:
+                    ax.text(xi, b + v / 2, str(v), ha="center", va="center",
+                            fontsize=8, fontweight="700", color="white")
+            bottoms = [b + v for b, v in zip(bottoms, vals)]
 
-        # Value labels on top of each column; skip zeros to keep it clean.
-        ymax = max(pending + overdue + [1])
-        for bar in list(bars_o) + list(bars_p):
-            h = bar.get_height()
-            if h > 0:
-                ax.text(bar.get_x() + bar.get_width() / 2, h + ymax * 0.02, str(int(h)),
-                        ha="center", va="bottom", fontsize=9, fontweight="700", color="#0f1923")
+        # Grand total on top of each employee's column.
+        for xi, tot in zip(x, totals):
+            ax.text(xi, tot + ymax * 0.02, str(tot), ha="center", va="bottom",
+                    fontsize=9, fontweight="800", color="#0f1923")
 
-        # Full names rotated so they never overlap regardless of staff count.
         ax.set_xticks(x)
-        ax.set_xticklabels(labels, rotation=35, ha="right", fontsize=10, fontweight="600")
+        ax.set_xticklabels(people, rotation=35, ha="right", fontsize=10, fontweight="600")
         ax.set_ylim(0, ymax * 1.18)
-        _style_ax(ax, "Staff Workload Summary")
-        ax.legend(fontsize=10, frameon=False, loc="upper right",
-                  ncol=2, handlelength=1.0, handletextpad=0.4, columnspacing=1.2)
+        _style_ax(ax, "Overdue Statements by Employee")
+        # Legend outside on the right; _fig_to_b64 saves with bbox_inches='tight'
+        # so it's included without squeezing the bars.
+        ax.legend(fontsize=11, frameon=False, loc="upper left",
+                  bbox_to_anchor=(1.01, 1.0), title="Statement type",
+                  title_fontsize=12, handlelength=1.2, handletextpad=0.5)
 
         fig.tight_layout(pad=1.6)
         return _fig_to_b64(fig)
@@ -433,12 +458,12 @@ def _age_chart(age_distribution: list) -> str | None:
 
 # ---- Routes --------------------------------------------------------------
 
-def _workload_chart_cached(per_assignee: list) -> str | None:
-    """Workload PNG for the current data, rendered at most once per data change."""
+def _workload_chart_cached(overdue_items: list) -> str | None:
+    """Overdue chart PNG for the current data, rendered at most once per change."""
     key = _cache_key()
     with _cache_lock:
         if _chart_cache["key"] != key:
-            _chart_cache["img"] = _workload_chart(per_assignee)
+            _chart_cache["img"] = _workload_chart(overdue_items)
             _chart_cache["key"] = key
         return _chart_cache["img"]
 
@@ -610,7 +635,7 @@ def overview():
     return render_template("overview.html",
                            data=data,
                            overdue_days=_overdue_days(),
-                           workload_img=_workload_chart_cached(data["per_assignee"]),
+                           workload_img=_workload_chart_cached(data["overdue"]),
                            age_dist=age_dist,
                            max_age_count=max_age_count)
 
@@ -621,9 +646,10 @@ def person():
     data = _get_data()
     names = sorted({it["assignee"] for it in data["items"]})
     name = request.args.get("name", names[0] if names else "")
+    # Clients A→Z (case-insensitive); oldest-first within the same client.
     items = sorted(
         [it for it in data["items"] if it["assignee"] == name],
-        key=lambda x: x["age_days"], reverse=True,
+        key=lambda x: (x["client"].lower(), -x["age_days"]),
     )
     ages = [it["age_days"] for it in items]
     stats = {
@@ -642,6 +668,8 @@ def projects():
     ft = request.args.get("filter", "All")
     pkey = request.args.get("pkey", "")
     show_done = request.args.get("done", "0") == "1"
+    sel_year = request.args.get("year", "")
+    sel_month = request.args.get("month", "")
 
     all_proj = data["projects"]
     if show_done:
@@ -659,7 +687,21 @@ def projects():
     for t in type_chips:
         counts[t] = sum(1 for p in relevant if p["return_type"] == t)
 
+    # Years present in THIS tab's returns (open, or completed), newest first, for
+    # the "opened" filter dropdown — so the options always match what's shown.
+    years = sorted({p["opened_year"] for p in relevant if p["opened_year"]}, reverse=True)
+    # Drop a year that isn't offered (e.g. from a stale/shared URL) so the
+    # dropdown selection and the applied filter never disagree.
+    if sel_year and (not sel_year.isdigit() or int(sel_year) not in years):
+        sel_year = ""
+
     display = [p for p in relevant if ft == "All" or p["return_type"] == ft]
+    # Month/year "opened" filter — narrows to returns opened in that period.
+    if sel_year:
+        display = [p for p in display if str(p["opened_year"]) == sel_year]
+    if sel_month:
+        display = [p for p in display if str(p["opened_month"]) == sel_month]
+    # Pick the default-selected return AFTER filtering so it's one that's shown.
     if not pkey and display:
         pkey = display[0]["project_key"]
 
@@ -673,7 +715,8 @@ def projects():
                            display=display, selected=selected,
                            filter_type=ft, show_done=show_done,
                            counts=counts, totals=totals,
-                           type_chips=type_chips, all_types=all_types)
+                           type_chips=type_chips, all_types=all_types,
+                           years=years, sel_year=sel_year, sel_month=sel_month)
 
 
 @app.route("/projects/doc", methods=["POST"])
@@ -745,10 +788,16 @@ def overdue():
         key=lambda kv: kv[0].lower(),
     )
     worst = {person: items[0] for person, items in ranked}
+    # Optional ?person= deep-link (from clicking an employee's name). Ignore an
+    # unknown name / someone with no overdue items so the page never lands empty.
+    selected_person = request.args.get("person", "")
+    if selected_person not in by_person:
+        selected_person = ""
     return render_template("overdue.html",
                            overdue_items=data["overdue"],
                            overdue_days=_overdue_days(),
-                           ranked=ranked, worst=worst)
+                           ranked=ranked, worst=worst,
+                           selected_person=selected_person)
 
 
 @app.route("/clients")
