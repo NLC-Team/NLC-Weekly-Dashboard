@@ -3,8 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NLC Financial Dashboard</title>
+<title>NLC Dashboard</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiBmaWxsPSIjMWEzZjhmIiByeD0iNSIvPjxyZWN0IHg9IjciIHk9IjciIHdpZHRoPSI1MCIgaGVpZ2h0PSI1MCIgZmlsbD0iIzRhOWQ0ZiIgcng9IjMiLz48dGV4dCB4PSIzMiIgeT0iNDYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCBCbGFjayxBcmlhbCxzYW5zLXNlcmlmIiBmb250LXdlaWdodD0iOTAwIiBmb250LXNpemU9IjI4IiBmaWxsPSJ3aGl0ZSIgbGV0dGVyLXNwYWNpbmc9Ii0xIj5OTEM8L3RleHQ+PC9zdmc+">
+<!-- Installable web app (PWA): manifest + icons let staff pin "NLC Dashboard"
+     as its own app window. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#1a3f8f">
+<meta name="application-name" content="NLC Dashboard">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="NLC Dashboard">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <style>
 :root {
   --bg: #f0f4f8;
@@ -179,10 +188,10 @@ label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase
       </svg>
     </div>
     <div style="margin-top:10px;font-size:11px;font-weight:700;letter-spacing:.09em;
-                text-transform:uppercase;color:#aebfd6;text-align:center">Financial Dashboard</div>
+                text-transform:uppercase;color:#aebfd6;text-align:center">Dashboard</div>
   </div>
   <a href="{{ url_for('overview') }}"  class="{{ 'active' if request.endpoint == 'overview' }}">Overview</a>
-  <a href="{{ url_for('projects') }}"  class="{{ 'active' if request.endpoint == 'projects' }}">Tax Returns</a>
+  <a href="{{ url_for('projects') }}"  class="{{ 'active' if request.endpoint == 'projects' }}">Returns &amp; Bookkeeping</a>
   <a href="{{ url_for('person') }}"    class="{{ 'active' if request.endpoint == 'person' }}">Staff &#8211; Clients</a>
   <a href="{{ url_for('overdue') }}"   class="{{ 'active' if request.endpoint == 'overdue' }}">Overdue</a>
   {% if current_role == 'Admin' %}
@@ -220,5 +229,15 @@ label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase
   {% endif %}
   {% block content %}{% endblock %}
 </main>
+<script>
+  // Register the service worker so the dashboard is installable as its own app.
+  // Only works in a secure context (HTTPS, or localhost on the host machine);
+  // over plain HTTP to a remote server it silently no-ops until HTTPS is added.
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/sw.js').catch(function () { /* non-fatal */ });
+    });
+  }
+</script>
 </body>
 </html>

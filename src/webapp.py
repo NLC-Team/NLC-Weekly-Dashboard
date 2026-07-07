@@ -1,4 +1,4 @@
-"""NLC Financial Dashboard - Flask web server.
+"""NLC Dashboard - Flask web server.
 
 Run directly (`python src/webapp.py`) or via Run Dashboard.bat.
 Opens the browser automatically on startup.
@@ -34,7 +34,7 @@ matplotlib.use("Agg")
 # Chart font: Times New Roman for a classic, professional look.
 matplotlib.rcParams["font.family"] = ["Times New Roman", "Times", "serif"]
 from flask import (Flask, abort, g, redirect, render_template, request,
-                   session, url_for)
+                   send_from_directory, session, url_for)
 from matplotlib.figure import Figure
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -53,7 +53,12 @@ app.config.update(
     # "Remember me" makes the session permanent for this long; without it the
     # cookie is a browser-session cookie that clears when the browser closes.
     PERMANENT_SESSION_LIFETIME=timedelta(days=7),
+    # Re-check template files on every render so edits show up on a plain
+    # browser refresh — no server restart needed (Waitress doesn't use the
+    # Flask dev server's reloader, so this wouldn't happen by default).
+    TEMPLATES_AUTO_RELOAD=True,
 )
+app.jinja_env.auto_reload = True
 
 # ---- Global singleton store (single-user local app) ----------------------
 _store: Store | None = None
@@ -243,7 +248,8 @@ def manager_required(fn):
 
 # ---- Global request gate: CSRF + authentication ---------------------------
 
-_PUBLIC_ENDPOINTS = {"login", "signup", "logout", "setup", "static"}
+_PUBLIC_ENDPOINTS = {"login", "signup", "logout", "setup", "static",
+                     "manifest", "service_worker"}
 
 
 @app.before_request
@@ -289,6 +295,31 @@ def _forbidden(_e):
 def _bad_request(e):
     desc = getattr(e, "description", "Bad request.")
     return render_template("error.html", code=400, title="Bad request", message=desc), 400
+
+
+# ---- Installable web app (PWA) -------------------------------------------
+# Served from the site root (not /static/) so the manifest's and service
+# worker's scope covers the whole app ("/"). A service worker can only control
+# pages at or below its own path, so sw.js must live at the root. Both are
+# public (browsers fetch them before login) — see _PUBLIC_ENDPOINTS.
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    resp = send_from_directory(app.static_folder, "manifest.webmanifest")
+    resp.headers["Content-Type"] = "application/manifest+json"
+    return resp
+
+
+@app.route("/sw.js")
+def service_worker():
+    resp = send_from_directory(app.static_folder, "sw.js")
+    resp.headers["Content-Type"] = "application/javascript"
+    # Allow a file physically served from /sw.js to control the entire "/" scope.
+    resp.headers["Service-Worker-Allowed"] = "/"
+    # The worker script itself must not be cached, or clients get stuck on an
+    # old version and never see updates.
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 # ---- Dashboard data + chart cache ----------------------------------------
@@ -645,20 +676,21 @@ def overview():
 def person():
     data = _get_data()
     names = sorted({it["assignee"] for it in data["items"]})
-    name = request.args.get("name", names[0] if names else "")
+    # Default view is All staff; a specific assignee narrows to their items.
+    name = request.args.get("name", "__all__")
+    show_all = name in ("", "__all__") or name not in names
+    shown = data["items"] if show_all else [it for it in data["items"] if it["assignee"] == name]
     # Clients A→Z (case-insensitive); oldest-first within the same client.
-    items = sorted(
-        [it for it in data["items"] if it["assignee"] == name],
-        key=lambda x: (x["client"].lower(), -x["age_days"]),
-    )
+    items = sorted(shown, key=lambda x: (x["client"].lower(), -x["age_days"]))
     ages = [it["age_days"] for it in items]
     stats = {
         "pending": len(items),
         "overdue": sum(1 for it in items if it["overdue"]),
         "max_age": max(ages) if ages else 0,
     }
-    return render_template("person.html", names=names, selected=name,
-                           items=items, stats=stats)
+    return render_template("person.html", names=names,
+                           selected=("" if show_all else name),
+                           show_all=show_all, items=items, stats=stats)
 
 
 @app.route("/projects")
@@ -781,9 +813,10 @@ def overdue():
     by_person: dict[str, list] = {}
     for it in data["overdue"]:
         by_person.setdefault(it["assignee"], []).append(it)
-    # Alphabetical by staff member; each person's items worst-first.
+    # Alphabetical by staff member; each person's items worst-first, where
+    # "worst" = most days overdue (past the threshold), not just longest open.
     ranked = sorted(
-        ((person, sorted(items, key=lambda x: x["age_days"], reverse=True))
+        ((person, sorted(items, key=lambda x: x["days_overdue"], reverse=True))
          for person, items in by_person.items()),
         key=lambda kv: kv[0].lower(),
     )
@@ -1057,10 +1090,16 @@ def import_upload():
                                upload_error=f"Could not read file: {e}")
 
     columns = list(df.columns)
-    # Check saved mapping for this CSV layout first
+    # Pre-fill the mapping for this layout. Start from a fresh guess (which knows
+    # every current logical field, including ones added after this file was last
+    # imported, e.g. "Client owner"), then overlay any saved mapping so the user's
+    # previous choices win. This way a saved mapping that predates a new field
+    # still gets that field auto-guessed instead of silently left unmapped.
     sig = importer.header_signature(columns)
     saved = get_store().get_mapping(sig)
-    guesses = saved if saved else importer.guess_mapping(columns)
+    guesses = importer.guess_mapping(columns)
+    if saved:
+        guesses = {**guesses, **saved}
     records = importer.apply_mapping(df, guesses)
     all_statuses = importer.distinct_statuses(records)
 
@@ -1131,9 +1170,18 @@ def import_cancel():
 
 # ---- Startup -------------------------------------------------------------
 
-HOST = "127.0.0.1"
+# BIND_HOST is what the server listens on. "0.0.0.0" = every network interface,
+# so other computers on the internal LAN can reach it at http://<server>:5000 —
+# required for team hosting. (Use "127.0.0.1" to restrict to this machine only.)
+# The firewall must allow inbound TCP 5000 from the internal network for this to
+# be reachable; keep it off the public internet — the DB holds client data.
+BIND_HOST = "0.0.0.0"
+# LOCAL_HOST is only for talking to ourselves — the "already running?" check and
+# the auto-opened browser tab. A browser can't open http://0.0.0.0:5000, and you
+# can't connect() to 0.0.0.0 as a client, so those always use the loopback.
+LOCAL_HOST = "127.0.0.1"
 PORT = 5000
-URL = f"http://{HOST}:{PORT}"
+URL = f"http://{LOCAL_HOST}:{PORT}"
 
 
 def _server_already_running() -> bool:
@@ -1141,7 +1189,7 @@ def _server_already_running() -> bool:
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.4)
-        return s.connect_ex((HOST, PORT)) == 0
+        return s.connect_ex((LOCAL_HOST, PORT)) == 0
 
 
 def _open_browser():
@@ -1161,9 +1209,10 @@ if __name__ == "__main__":
     threading.Thread(target=_open_browser, daemon=True).start()
     try:
         from waitress import serve
-        logging.info(f"Starting on {URL} (Waitress)")
-        serve(app, host=HOST, port=PORT, threads=8,
+        logging.info(f"Starting on http://{BIND_HOST}:{PORT} (Waitress) "
+                     f"— local tab at {URL}")
+        serve(app, host=BIND_HOST, port=PORT, threads=8,
               channel_timeout=60, cleanup_interval=30)
     except ImportError:
         logging.warning("Waitress not found — falling back to Flask dev server")
-        app.run(host=HOST, port=PORT, debug=False, use_reloader=False)
+        app.run(host=BIND_HOST, port=PORT, debug=False, use_reloader=False)

@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS items (
     item_key    TEXT PRIMARY KEY,
     assignee    TEXT,
     client      TEXT,
+    client_owner TEXT,
     title       TEXT,
     last_status TEXT,
     source_date TEXT,
@@ -77,7 +78,8 @@ CREATE INDEX IF NOT EXISTS idx_items_resolved ON items(resolved);
 
 # Columns added after the first release; applied to older databases on open.
 _MIGRATIONS = {
-    "items": [("project_key", "TEXT"), ("return_type_raw", "TEXT")],
+    "items": [("project_key", "TEXT"), ("return_type_raw", "TEXT"),
+              ("client_owner", "TEXT")],
     "staff": [("username", "TEXT"), ("password_hash", "TEXT"),
               ("status", "TEXT DEFAULT 'active'"), ("email", "TEXT"),
               ("email_verified", "INTEGER DEFAULT 0"),
@@ -215,32 +217,36 @@ class Store:
         inserts: list[tuple] = []
         updates: list[tuple] = []
         for rec in pending_records:
+            # Empty owner -> NULL so a re-import without the column mapped keeps
+            # any owner already on file (see COALESCE in the UPDATE below).
+            client_owner = (rec.get("client_owner") or "").strip() or None
             if rec["item_key"] not in existing:
                 # first_seen uses the real source date when available, else today.
                 first_seen = _iso(rec.get("source_date")) or iso
                 inserts.append((
-                    rec["item_key"], rec["assignee"], rec["client"], rec["title"],
-                    rec["status"], _iso(rec.get("source_date")), first_seen, iso,
-                    rec.get("project_key"), rec.get("return_type_raw"),
+                    rec["item_key"], rec["assignee"], rec["client"], client_owner,
+                    rec["title"], rec["status"], _iso(rec.get("source_date")),
+                    first_seen, iso, rec.get("project_key"), rec.get("return_type_raw"),
                 ))
             else:
                 updates.append((
-                    rec["assignee"], rec["client"], rec["title"], rec["status"],
-                    _iso(rec.get("source_date")), iso,
+                    rec["assignee"], rec["client"], client_owner, rec["title"],
+                    rec["status"], _iso(rec.get("source_date")), iso,
                     rec.get("project_key"), rec.get("return_type_raw"), rec["item_key"],
                 ))
 
         if inserts:
             self.conn.executemany(
-                "INSERT INTO items(item_key, assignee, client, title, last_status, "
-                "source_date, first_seen, last_seen, resolved, resolved_at, "
+                "INSERT INTO items(item_key, assignee, client, client_owner, title, "
+                "last_status, source_date, first_seen, last_seen, resolved, resolved_at, "
                 "project_key, return_type_raw) "
-                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
                 inserts,
             )
         if updates:
             self.conn.executemany(
-                "UPDATE items SET assignee=?, client=?, title=?, last_status=?, "
+                "UPDATE items SET assignee=?, client=?, "
+                "client_owner=COALESCE(?, client_owner), title=?, last_status=?, "
                 "source_date=COALESCE(?, source_date), last_seen=?, resolved=0, "
                 "resolved_at=NULL, project_key=?, return_type_raw=? WHERE item_key=?",
                 updates,
@@ -267,6 +273,7 @@ class Store:
                     "item_key": r["item_key"],
                     "assignee": r["assignee"],
                     "client": r["client"],
+                    "client_owner": r["client_owner"],
                     "title": r["title"],
                     "status": r["last_status"],
                     "source_date": _to_date(r["source_date"]),

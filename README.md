@@ -13,16 +13,26 @@ admin rights, no Python required on the user's machine.
 
 ---
 
-## For team members: just run it
+## For team members: just open it
 
-1. Get **`KarbonDashboard.exe`** (in the `dist` folder, or wherever IT shares it).
-2. Double-click it.
+1. In your browser, go to **NLC Dashboard** — `http://nlcdashboard` (or the exact
+   address IT shares, e.g. `http://<server-name>:5000`).
+2. Sign in with your **@nlcfcpa.com email + password** (first time: click *Request
+   access* — an admin approves you).
 3. Click **Import**, choose your Karbon CSV export, confirm the column mapping,
    tick which statuses count as "pending to send", and click **Import now**.
-4. Use the left menu: **Overview**, **By person**, **Overdue**, **Settings**.
+4. Use the left menu: **Overview**, **Returns & Bookkeeping**, **Staff – Clients**,
+   **Overdue**, **Settings**.
 
-That's it. Your column mapping and status choices are remembered, so future
-imports are one click.
+That's it. Nothing to install, and your column mapping and status choices are
+remembered, so future imports are one click.
+
+### Pin it as an app (optional)
+The dashboard is an installable web app. In Chrome or Edge, open the address and
+click the **Install** icon in the address bar (or menu → *Apps → Install this site
+as an app* / *Cast, save, and share → Install*). It then gets its own icon on your
+taskbar/Start menu and opens in its own window — no browser bars. *(Requires HTTPS
+for computers other than the host; see `IT help.md`.)*
 
 ### Day-to-day usage notes
 - **Overdue threshold** is adjustable in **Settings** (default: 14 days).

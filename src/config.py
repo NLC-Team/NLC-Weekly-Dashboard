@@ -36,6 +36,7 @@ def is_allowed_email(email: str) -> bool:
 LOGICAL_FIELDS = [
     ("assignee", "Assignee / staff member", True),
     ("client", "Client", True),
+    ("client_owner", "Client owner / partner", False),
     ("title", "Document / work title", True),
     ("status", "Status", True),
     ("date", "Start / created / due date", False),

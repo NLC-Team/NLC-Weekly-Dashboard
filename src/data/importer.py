@@ -16,8 +16,13 @@ from config import LOGICAL_FIELDS
 
 # Keyword hints used to pre-guess the mapping so the user usually just confirms.
 _GUESS_HINTS = {
-    "assignee": ["assignee", "assigned", "owner", "staff", "preparer", "responsible", "team member", "user"],
+    "assignee": ["assignee", "assigned", "staff", "preparer", "responsible", "team member", "user"],
     "client": ["client", "customer", "account", "entity", "contact"],
+    # The relationship owner / partner, distinct from the per-document assignee.
+    # Specific multi-word hints first so this doesn't grab the assignee column.
+    "client_owner": ["client owner", "client manager", "client partner",
+                     "engagement partner", "relationship manager", "relationship partner",
+                     "account manager", "partner", "manager", "owner"],
     "title": ["document", "form", "work title", "title", "task", "job", "name", "description", "subject"],
     "status": ["status", "state", "stage", "workflow"],
     "date": ["start date", "created", "due", "date", "deadline", "opened", "requested"],
@@ -109,6 +114,7 @@ def apply_mapping(df: pd.DataFrame, mapping: dict) -> list[dict]:
         rec = {
             "assignee": get("assignee") or "(unassigned)",
             "client": get("client"),
+            "client_owner": get("client_owner"),
             "title": get("title"),
             "status": get("status"),
             "source_date": parse_date(get("date")),

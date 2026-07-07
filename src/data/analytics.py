@@ -33,13 +33,20 @@ def item_age_days(item: dict, today: date) -> int:
 
 
 def enrich_items(items: Iterable[dict], today: date, overdue_days: int) -> list[dict]:
-    """Return copies of items with `age_days` and `overdue` filled in."""
+    """Return copies of items with `age_days`, `overdue`, and `days_overdue` filled in.
+
+    `days_overdue` is how many days past the overdue threshold an item is
+    (`age_days - overdue_days`, never negative). Because it derives from
+    `age_days`, which is measured against `today`, it advances by one every
+    calendar day the item stays open — it's not frozen at import time.
+    """
     out = []
     for it in items:
         age = item_age_days(it, today)
         enriched = dict(it)
         enriched["age_days"] = age
         enriched["overdue"] = age > overdue_days
+        enriched["days_overdue"] = max(0, age - overdue_days)
         out.append(enriched)
     return out
 

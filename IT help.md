@@ -11,10 +11,11 @@ tax-return dashboards. It runs on one Windows machine; staff view it in a normal
 It holds firm and client data, so **it must stay inside our network — not on any public cloud.**
 
 ## The problem we're trying to solve
-- Right now the app only runs on **one machine** and is only reachable **on that same machine**
-  (it listens on `127.0.0.1:5000`, i.e. "localhost only").
-- Our staff are on **separate computers / virtual desktops**, so today they can't open it.
-- That machine is **locked down**, so we need IT's help to make it reachable and keep it running.
+- The app is **ready to serve the whole network** (it now listens on `0.0.0.0:5000`, all
+  interfaces), but two things still block staff from reaching it: the **firewall** isn't open on
+  port 5000, and it isn't yet set to **run as an always-on service**.
+- Our staff are on **separate computers / virtual desktops**, so they need to reach it over the LAN.
+- That machine is **locked down**, so we need IT's help to open the port and keep it running.
 
 We want it to behave like a simple internal website: one always-on machine runs it, everyone
 else opens `http://<server-name>:5000` in their browser. No install needed on staff computers.
@@ -23,25 +24,51 @@ else opens `http://<server-name>:5000` in their browser. No install needed on st
 
 ## What we need IT to do (the fix)
 
-1. **Let the app listen on the network** (not just on itself). This is a one-line change in the
-   code (`HOST = "127.0.0.1"` → `HOST = "0.0.0.0"` in `src\webapp.py`) — our developer can make
-   it. Flagging it so you know the app will then listen on **port 5000**.
+1. **Let the app listen on the network** (not just on itself). ✅ **Already done in code** —
+   the app now binds to `0.0.0.0` (all interfaces) and listens on **port 5000**. No code change
+   needed from you; flagging it so you know the port to open.
 
 2. **Open the firewall** — allow inbound **TCP port 5000** on the host machine from the
    **internal network only** (please do **not** expose it to the public internet).
 
-3. **Keep it running automatically** — set the app to start on boot and stay running after
-   reboots/log-off. Today it only runs while someone is logged in and launches it by hand.
-   Options: a **Scheduled Task at startup**, or a **Windows service** (e.g. NSSM). It is launched
-   as:
+3. **Keep it running automatically, with NO ONE logged in.** ⭐ *This is the most important
+   requirement.* The whole point is that the dashboard must **not depend on any person's session** —
+   it should behave like an internal website that's always up, even after reboots and even when
+   nobody is signed in to the host machine.
+
+   **Please set it up as a Windows Service** (e.g. **NSSM** — `nssm install KarbonDashboard`), OR,
+   if you prefer a Scheduled Task, it **must** be created with **"Run whether user is logged on or
+   not"** and **"Run with highest privileges"**, triggered **At startup**.
+
+   > ⚠️ A plain "At log on" Scheduled Task is **not** sufficient — it only runs after someone signs
+   > in, which reintroduces the human dependency we're trying to remove. It must run with nobody
+   > logged in.
+
+   Either way, launch it as:
    ```
    %LOCALAPPDATA%\WP\WPy64-313130\python\pythonw.exe   <app-folder>\src\webapp.py
    ```
-   (Uses a portable "WinPython" install — no admin/MSI install required for Python itself.)
+   (Uses a portable "WinPython" install — no admin/MSI install required for Python itself. Note:
+   `%LOCALAPPDATA%` resolves to the *service account's* profile, so run the service as the account
+   that owns the WinPython folder, or use the full expanded path to `pythonw.exe`.)
 
-4. **Give staff the address** to bookmark, e.g. `http://<server-name-or-IP>:5000`.
+4. **Give it the friendly address `NLC Dashboard` / `http://nlcdashboard`.** We'd like staff to
+   reach it by an easy name, not an IP-and-port. Two pieces:
+   - **DNS:** create an internal DNS record (A record or CNAME) **`nlcdashboard`** → the host
+     machine's IP, so `http://nlcdashboard:5000` resolves firm-wide.
+   - **Drop the `:5000`:** put a tiny reverse proxy on the host that listens on **port 80** and
+     forwards to `127.0.0.1:5000` (IIS with ARR, or nginx/Caddy — Caddy is a one-line config).
+     Then the address is simply **`http://nlcdashboard`**. (Optional but nice-to-have; without it
+     the address is `http://nlcdashboard:5000`, which also works.)
 
-5. **Where to host it:** if the firm already has a preferred spot for small internal web tools,
+5. **Please enable HTTPS (`https://nlcdashboard`).** This is now **more than a nice-to-have**: staff
+   want to *install/pin the dashboard as its own app* (it's built as an installable web app / PWA),
+   and browsers only allow that over **HTTPS** (or on the host itself). If you're already adding the
+   reverse proxy in step 4, terminate TLS there with a firm/internal certificate — Caddy can even
+   auto-manage an internal CA cert. Over plain HTTP the app still works fully in the browser; only
+   the one-click "install as app" is unavailable until HTTPS is in place.
+
+6. **Where to host it:** if the firm already has a preferred spot for small internal web tools,
    that's ideal. Otherwise the current Windows Server it runs on is fine.
 
 ---
@@ -57,8 +84,9 @@ else opens `http://<server-name>:5000` in their browser. No install needed on st
 ## Security notes
 - **Internal only** — do not open port 5000 to the public internet.
 - The connection is currently plain **HTTP**, so the login password travels unencrypted on the
-  internal network. Acceptable short-term for an internal tool, but ideally put it behind
-  **HTTPS** via a reverse proxy (IIS / nginx / Caddy) with a firm certificate — a good phase 2.
+  internal network. Acceptable short-term for an internal tool, but **HTTPS is recommended** — see
+  step 5 above (it also unlocks installing the dashboard as an app). Put it behind a reverse proxy
+  (IIS / nginx / Caddy) with a firm/internal certificate.
 - Access is controlled in the app itself: staff sign in with their **@nlcfcpa.com email +
   password**, and new sign-ups require an admin to approve them.
 

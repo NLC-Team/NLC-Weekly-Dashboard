@@ -9,23 +9,34 @@
 </div>
 {% else %}
 <div class="banner banner-warn">
-  <div class="banner-warn-title">Action needed — longest-waiting items per person:</div>
+  <div class="banner-warn-title">Action needed — most overdue item per person:</div>
   {% for person, items in ranked %}
   <div class="banner-item">
-    • <a href="{{ url_for('overdue', person=person) }}" style="color:inherit"><strong>{{ person }}</strong></a>: {{ items|length }} overdue — longest wait: <strong>{{ worst[person].client }}</strong> ({{ worst[person].age_days }} days)
+    • <a href="{{ url_for('overdue', person=person) }}" style="color:inherit"><strong>{{ person }}</strong></a>: {{ items|length }} overdue — most overdue: <strong>{{ worst[person].client }}</strong> ({{ worst[person].days_overdue }} day{{ '' if worst[person].days_overdue == 1 else 's' }} overdue)
   </div>
   {% endfor %}
 </div>
 
-<!-- Employee picker -->
-<div class="row mb-2" style="gap:10px;align-items:center">
+<!-- Employee picker + search -->
+<div class="row mb-2" style="gap:12px;align-items:center;flex-wrap:wrap">
   <label style="margin-bottom:0">Staff member</label>
-  <select id="staffPicker" onchange="filterStaff(this.value)" style="min-width:240px">
+  <select id="staffPicker" onchange="applyFilters()" style="min-width:240px">
     <option value="__all__" {{ 'selected' if not selected_person }}>All staff ({{ overdue_items|length }})</option>
     {% for person, items in ranked %}
     <option value="{{ person }}" {{ 'selected' if person == selected_person }}>{{ person }} ({{ items|length }})</option>
     {% endfor %}
   </select>
+
+  <div style="display:flex;align-items:center;gap:6px">
+    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
+         stroke="#374151" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input type="text" id="overdueSearch" placeholder="Search client, document or status…"
+           oninput="applyFilters()"
+           style="min-width:230px;font-size:12px;padding:7px 11px">
+    <span id="searchCount" style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap"></span>
+  </div>
 </div>
 
 <div class="table-wrap">
@@ -48,24 +59,53 @@
         </td>
       </tr>
       {% for it in items %}
-      <tr class="overdue">
+      <tr class="overdue" data-search="{{ (it.client ~ ' ' ~ it.title ~ ' ' ~ it.status) | lower }}">
         <td>{{ it.client }}</td>
         <td style="font-weight:600">{{ it.title }}</td>
         <td>{{ it.status }}</td>
         <td style="font-weight:700">{{ it.age_days }}</td>
-        <td style="font-weight:700">{{ it.age_days - overdue_days }}</td>
+        <td style="font-weight:700">{{ it.days_overdue }}</td>
       </tr>
       {% endfor %}
     </tbody>
     {% endfor %}
   </table>
+  <div id="noResults" style="display:none;text-align:center;padding:24px;color:var(--muted);font-size:13px">
+    No overdue items match your search.
+  </div>
 </div>
 
 <script>
-function filterStaff(val) {
+// Staff picker + search compose: a row shows only if its staff group is
+// selected AND it matches the search text. A group whose rows are all filtered
+// out (or isn't the selected staff) is hidden entirely, header included.
+function applyFilters() {
+  const staff = document.getElementById('staffPicker').value;
+  const term = (document.getElementById('overdueSearch').value || '').trim().toLowerCase();
+  let totalVisible = 0;
   document.querySelectorAll('tbody.staff-group').forEach(function (tb) {
-    tb.style.display = (val === '__all__' || tb.dataset.person === val) ? '' : 'none';
+    if (staff !== '__all__' && tb.dataset.person !== staff) {
+      tb.style.display = 'none';
+      return;
+    }
+    let groupVisible = 0;
+    tb.querySelectorAll('tr.overdue').forEach(function (row) {
+      const match = !term || (row.dataset.search || '').includes(term);
+      row.style.display = match ? '' : 'none';
+      if (match) groupVisible++;
+    });
+    tb.style.display = groupVisible ? '' : 'none';
+    totalVisible += groupVisible;
   });
+  const count = document.getElementById('searchCount');
+  const noRes = document.getElementById('noResults');
+  if (term) {
+    count.textContent = totalVisible + ' result' + (totalVisible === 1 ? '' : 's');
+    noRes.style.display = totalVisible === 0 ? 'block' : 'none';
+  } else {
+    count.textContent = '';
+    noRes.style.display = 'none';
+  }
 }
 </script>
 {% endif %}
