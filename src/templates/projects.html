@@ -3,6 +3,15 @@
 <h1>Returns &amp; bookkeeping</h1>
 <p class="subtitle">Open returns and the client documents they're waiting on. Tick documents as they arrive; mark a return complete when it's done.</p>
 
+{% if staff_mode %}
+<div style="margin-bottom:14px">
+  <h2 style="margin-bottom:2px">{{ staff }} — {% if filter_type != 'All' %}{{ filter_type }}{% else %}all statement types{% endif %}</h2>
+  <p class="text-muted" style="font-size:12.5px">
+    {{ staff_items|length }} statement{{ '' if staff_items|length == 1 else 's' }}{% if filter_type != 'All' %} of type &ldquo;{{ filter_type }}&rdquo;{% endif %}
+    &nbsp;·&nbsp; <a href="{{ url_for('projects') }}" style="color:var(--accent);font-weight:600">&larr; Back to all returns</a>
+  </p>
+</div>
+{% else %}
 <div class="kpi-row kpi-3" style="margin-bottom:16px">
   <div class="kpi-card">
     <div class="kpi-value text-accent">{{ totals.open_total }}</div>
@@ -17,19 +26,36 @@
     <div class="kpi-label">Documents outstanding</div>
   </div>
 </div>
+{% endif %}
 
 <div class="chips" style="justify-content:space-between">
   <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center">
+    {# Staff filter — the "staff member tab". "All staff" = normal return view;
+       picking a name (or arriving from an Overview statement-type pill) switches
+       to that employee's individual statements. #}
+    <form method="get" action="{{ url_for('projects') }}"
+          style="display:flex;gap:6px;align-items:center;margin-right:4px">
+      <input type="hidden" name="filter" value="{{ filter_type }}">
+      <label style="margin-bottom:0;text-transform:none;font-size:12px;font-weight:700">Staff:</label>
+      <select name="staff" onchange="this.form.submit()" style="font-size:12px;padding:5px 8px">
+        <option value="">All staff</option>
+        {% for n in all_staff_names %}
+        <option value="{{ n }}" {{ 'selected' if staff_mode and n == staff }}>{{ n }}</option>
+        {% endfor %}
+      </select>
+    </form>
+
     {# Type chips are built from the specific types in the data (plus "All"), so
-       new types appear here automatically. In completed mode a click exits
-       completed (done=0) and applies the filter — one click, no double-click. #}
+       new types appear here automatically. In staff mode they narrow that
+       employee's statements by type; otherwise they filter the return list. #}
     {% for name in ['All'] + type_chips %}
     <a class="chip {{ 'active' if filter_type == name and not show_done }}"
-       href="{{ url_for('projects', filter=name, done='0') }}">
+       href="{% if staff_mode %}{{ url_for('projects', staff=staff, filter=name) }}{% else %}{{ url_for('projects', filter=name, done='0') }}{% endif %}">
       {{ name }}{% if not show_done %} ({{ counts.get(name, 0) }}){% endif %}
     </a>
     {% endfor %}
 
+    {% if not staff_mode %}
     {# Month + year "opened" filter — narrows the open returns/bookkeeping to a
        period. Submits via GET, preserving the current type + completed state. #}
     <form method="get" action="{{ url_for('projects') }}"
@@ -56,6 +82,7 @@
        style="margin-left:8px">
       {% if show_done %}&#10003; Showing completed ({{ display|length }}) — click to exit{% else %}Show completed{% endif %}
     </a>
+    {% endif %}
   </div>
 
   <!-- Client search for tax returns -->
@@ -71,6 +98,38 @@
   </div>
 </div>
 
+{% if staff_mode %}
+<!-- Staff statements: this employee's individual statements, optionally by type.
+     Counts match the Overview "Statement types" pills. -->
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Client</th>
+        <th>Statement / work</th>
+        <th>Type</th>
+        <th>Status</th>
+        <th>Days open</th>
+      </tr>
+    </thead>
+    <tbody id="returnsBody">
+      {% for it in staff_items %}
+      <tr class="{{ 'overdue' if it.overdue }}" data-client="{{ it.client | lower }}">
+        <td><a href="{{ url_for('projects', pkey=it.project_key) }}" style="color:var(--accent);font-weight:600;text-decoration:none"
+               title="Open {{ it.client }} in the full return view">{{ it.client }}</a></td>
+        <td style="font-weight:600">{{ it.title }}</td>
+        <td>{{ it.return_type_raw or 'Unclassified' }}</td>
+        <td>{{ it.status }}</td>
+        <td style="font-weight:700">{{ it.age_days }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">No statements to show for this staff member and type.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div id="noResults" style="display:none;text-align:center;padding:24px;color:var(--muted);font-size:13px">No clients match your search.</div>
+</div>
+{% else %}
 <div class="split" style="height:calc(100vh - 360px)">
   <!-- Left: project list -->
   <div class="split-left">
@@ -210,6 +269,7 @@
     {% endif %}
   </div>
 </div>
+{% endif %}
 
 <script>
 const splitLeft = document.querySelector('.split-left');
@@ -262,6 +322,17 @@ function filterReturns(q) {
     const row = e.target.closest('tr.project-row');
     if (row) selectRow(row);
   });
+})();
+
+// Deep-link support: when you arrive with ?pkey=... (e.g. clicking a client on
+// the Overdue or Staff–Clients tab), scroll that exact return into view in the
+// list and flash it, so you land ON the client — not just on the page top.
+(function () {
+  const sel = document.querySelector('#returnsBody tr.project-row.selected');
+  if (!sel) return;
+  sel.scrollIntoView({ block: 'center' });
+  sel.classList.add('flash');
+  setTimeout(function () { sel.classList.remove('flash'); }, 1700);
 })();
 
 // "Copy link" — copies a shareable ABSOLUTE URL to the selected return.

@@ -28,7 +28,20 @@ def import_csv(store: Store, path: str, mapping: dict, pending_statuses: list[st
 def dashboard_data(store: Store, today: date, overdue_days: int) -> dict:
     """Everything the views need, computed from current history + settings."""
     items = analytics.enrich_items(store.active_items(), today, overdue_days)
-    projects = analytics.build_projects(items, store.get_doc_states(), store.get_project_states())
+    doc_states = store.get_doc_states()
+    project_states = store.get_project_states()
+    # A document stops being "action needed" once it's marked received from the
+    # client or its whole return is marked completed. Fold that into each item's
+    # overdue flag so completing/receiving work on the Returns & Bookkeeping page
+    # automatically drops it off the Overdue tab and its counts — no re-import.
+    completed_projects = {k for k, v in project_states.items() if v.get("completed")}
+    for it in items:
+        it["received"] = bool(doc_states.get(it["item_key"], False))
+        it["completed"] = it.get("project_key") in completed_projects
+        if it["received"] or it["completed"]:
+            it["overdue"] = False
+            it["days_overdue"] = 0
+    projects = analytics.build_projects(items, doc_states, project_states)
     return {
         "items": items,
         "totals": analytics.totals(items),

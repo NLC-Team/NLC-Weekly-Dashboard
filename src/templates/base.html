@@ -77,6 +77,9 @@ tr:hover td{background:#f7f9fc}
 tr.overdue td{background:var(--danger-bg);color:var(--danger)}
 tr.done td{color:var(--ok)}
 tr.selected td{background:var(--accent-light)!important}
+/* Brief highlight when you arrive at a return via a client deep-link. */
+@keyframes rowflash{0%{background:#fde68a}60%{background:#fde68a}100%{background:var(--accent-light)}}
+tr.project-row.flash td{animation:rowflash 1.6s ease-out}
 
 /* Buttons */
 .btn{display:inline-flex;align-items:center;gap:5px;padding:7px 16px;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;text-decoration:none;transition:background .12s}

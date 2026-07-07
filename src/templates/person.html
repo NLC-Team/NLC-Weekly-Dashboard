@@ -61,7 +61,8 @@
       {% for it in items %}
       <tr class="{{ 'overdue' if it.overdue }}" data-client="{{ it.client | lower }}"
           data-owner="{{ (it.client_owner or '') | lower }}">
-        <td>{{ it.client }}</td>
+        <td><a href="{{ url_for('projects', pkey=it.project_key, done=('1' if it.completed else '0')) }}" style="color:var(--accent);font-weight:600;text-decoration:none"
+               title="Open {{ it.client }} in Returns &amp; Bookkeeping">{{ it.client }}</a></td>
         <td style="font-weight:600">{{ it.client_owner or '—' }}</td>
         {% if show_all %}<td>{{ it.assignee }}</td>{% endif %}
         <td style="font-weight:600">{{ it.title }}</td>

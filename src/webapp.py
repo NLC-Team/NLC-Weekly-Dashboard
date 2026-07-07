@@ -702,8 +702,40 @@ def projects():
     show_done = request.args.get("done", "0") == "1"
     sel_year = request.args.get("year", "")
     sel_month = request.args.get("month", "")
+    staff = request.args.get("staff", "")
 
     all_proj = data["projects"]
+    all_staff_names = sorted({it["assignee"] for it in data["items"]})
+
+    # --- Staff statements mode --------------------------------------------
+    # Reached from the Overview "Statement types" pills (or the Staff dropdown):
+    # show ONE employee's individual statements, optionally narrowed to a single
+    # type. Counts here match the Overview pills — both count items per assignee
+    # per normalised type.
+    if staff in all_staff_names:
+        s_items = [it for it in data["items"] if it["assignee"] == staff]
+        type_counts: dict[str, int] = {}
+        for it in s_items:
+            t = config.normalize_return_type(it.get("return_type_raw"))
+            type_counts[t] = type_counts.get(t, 0) + 1
+        staff_chips = sorted(type_counts, key=str.lower)
+        staff_counts = {"All": len(s_items)}
+        staff_counts.update(type_counts)
+        shown = (s_items if ft == "All" else
+                 [it for it in s_items
+                  if config.normalize_return_type(it.get("return_type_raw")) == ft])
+        staff_items = sorted(shown, key=lambda x: (
+            config.normalize_return_type(x.get("return_type_raw")),
+            x["client"].lower(), -x["age_days"]))
+        return render_template(
+            "projects.html", staff_mode=True, staff=staff, staff_items=staff_items,
+            all_staff_names=all_staff_names, filter_type=ft,
+            type_chips=staff_chips, counts=staff_counts,
+            # Placeholders so the shared template never hits an undefined var.
+            display=[], selected=None, show_done=False,
+            totals=data["project_totals"], all_types=[],
+            years=[], sel_year="", sel_month="")
+
     if show_done:
         # Completed tab: show ONLY completed returns; type filter is disabled.
         relevant = [p for p in all_proj if p["completed"]]
@@ -744,6 +776,8 @@ def projects():
     all_types = sorted({p["return_type"] for p in all_proj} | {config.UNCLASSIFIED},
                        key=str.lower)
     return render_template("projects.html",
+                           staff_mode=False, staff="", staff_items=None,
+                           all_staff_names=all_staff_names,
                            display=display, selected=selected,
                            filter_type=ft, show_done=show_done,
                            counts=counts, totals=totals,
