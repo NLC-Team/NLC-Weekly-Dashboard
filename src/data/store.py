@@ -74,6 +74,16 @@ CREATE TABLE IF NOT EXISTS staff (
 -- The dashboard reads active items on every page load via
 -- "WHERE resolved=0"; index it so that stays fast as resolved history grows.
 CREATE INDEX IF NOT EXISTS idx_items_resolved ON items(resolved);
+-- Security audit trail: who did what, from where, when. Append-only; the app
+-- never updates or deletes rows here.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts     TEXT,
+    actor  TEXT,
+    ip     TEXT,
+    action TEXT,
+    detail TEXT
+);
 """
 
 # Columns added after the first release; applied to older databases on open.
@@ -83,7 +93,10 @@ _MIGRATIONS = {
     "staff": [("username", "TEXT"), ("password_hash", "TEXT"),
               ("status", "TEXT DEFAULT 'active'"), ("email", "TEXT"),
               ("email_verified", "INTEGER DEFAULT 0"),
-              ("verify_code", "TEXT"), ("verify_sent_at", "TEXT")],
+              ("verify_code", "TEXT"), ("verify_sent_at", "TEXT"),
+              # Bumped whenever credentials change; sessions carry the value
+              # they were issued with and die when it no longer matches.
+              ("session_rev", "INTEGER DEFAULT 0")],
 }
 
 
@@ -369,7 +382,8 @@ class Store:
     # Accounts are managed by `name` (the primary key) and authenticated by
     # `email` (the login handle; `username` remains as a legacy fallback).
     _ACCOUNT_COLS = ("name, role, username, email, status, password_hash, "
-                     "COALESCE(email_verified,0) AS email_verified, verify_code, verify_sent_at")
+                     "COALESCE(email_verified,0) AS email_verified, verify_code, verify_sent_at, "
+                     "COALESCE(session_rev,0) AS session_rev")
 
     @staticmethod
     def _account(r) -> dict | None:
@@ -381,6 +395,7 @@ class Store:
             "password_hash": r["password_hash"],
             "email_verified": bool(r["email_verified"]),
             "verify_code": r["verify_code"], "verify_sent_at": r["verify_sent_at"],
+            "session_rev": r["session_rev"],
             "has_login": bool(r["password_hash"]),
         }
 
@@ -431,17 +446,21 @@ class Store:
 
     def set_login(self, name: str, email: str, password_hash: str) -> None:
         """Set a member's email login + password and activate them (admin action
-        for legacy rows / resets). Marks the email verified since an admin set it."""
+        for legacy rows / resets). Marks the email verified since an admin set it.
+        Bumps session_rev so any sessions issued under the old credentials die."""
         self.conn.execute(
-            "UPDATE staff SET email=?, password_hash=?, status='active', email_verified=1 "
-            "WHERE name=?",
+            "UPDATE staff SET email=?, password_hash=?, status='active', email_verified=1, "
+            "session_rev=COALESCE(session_rev,0)+1 WHERE name=?",
             (email, password_hash, name),
         )
         self.conn.commit()
 
     def set_password(self, name: str, password_hash: str) -> None:
+        """Change a password. Bumps session_rev: every existing session for the
+        account is invalidated (the caller re-stamps its own session to stay in)."""
         self.conn.execute(
-            "UPDATE staff SET password_hash=? WHERE name=?", (password_hash, name))
+            "UPDATE staff SET password_hash=?, session_rev=COALESCE(session_rev,0)+1 "
+            "WHERE name=?", (password_hash, name))
         self.conn.commit()
 
     def set_email(self, name: str, email: str) -> None:
@@ -482,6 +501,24 @@ class Store:
             "AND password_hash IS NOT NULL AND password_hash != ''"
         ).fetchone()
         return r[0]
+
+    # ---- audit trail ------------------------------------------------------
+    def log_event(self, ts: str, actor: str, ip: str, action: str, detail: str = "") -> None:
+        """Append one security-relevant event. Never raises: an audit failure
+        must not take down the action being audited."""
+        try:
+            self.conn.execute(
+                "INSERT INTO audit_log(ts, actor, ip, action, detail) VALUES(?, ?, ?, ?, ?)",
+                (ts, actor, ip, action, detail))
+            self.conn.commit()
+        except sqlite3.Error:
+            pass
+
+    def recent_events(self, limit: int = 200) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT ts, actor, ip, action, detail FROM audit_log "
+            "ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
+        return [dict(r) for r in rows]
 
     # ---- delete a client / project entirely ----------------------------
     def delete_project(self, project_key: str, item_keys: list[str]) -> None:

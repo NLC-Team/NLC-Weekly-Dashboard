@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Audit log</h1>
+<p class="subtitle">Security trail: sign-ins and failures, account and credential changes,
+imports, deletions, and settings edits. Newest first (last {{ events|length }} events).</p>
+
+<div class="card">
+  {% if events %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>When</th><th>Who</th><th>From</th><th>Action</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {% for e in events %}
+        <tr>
+          <td class="monospace" style="white-space:nowrap">{{ e.ts }}</td>
+          <td style="font-weight:600">{{ e.actor or '—' }}</td>
+          <td class="monospace">{{ e.ip or '—' }}</td>
+          <td>
+            <span class="badge {{ 'badge-overdue' if e.action in ('login_failed','signup_rejected')
+                                  else ('badge-manager' if e.action in ('login','logout')
+                                  else 'badge-open') }}">{{ e.action }}</span>
+          </td>
+          <td style="font-size:12px">{{ e.detail }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-muted" style="font-size:12px">Nothing recorded yet. Events appear here as
+  people sign in, accounts change, and data is imported or deleted.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -38,8 +38,10 @@ from flask import (Flask, abort, g, redirect, render_template, request,
 from matplotlib.figure import Figure
 from werkzeug.security import check_password_hash, generate_password_hash
 
+import cloudflare_hardening
 import config
 import mailer
+import vault
 from data import importer, service
 from data.store import Store
 
@@ -53,12 +55,19 @@ app.config.update(
     # "Remember me" makes the session permanent for this long; without it the
     # cookie is a browser-session cookie that clears when the browser closes.
     PERMANENT_SESSION_LIFETIME=timedelta(days=7),
+    # Largest accepted request body. The only big uploads are import CSVs/Excels
+    # (a full Karbon export is a few MB); anything bigger gets a clean 413
+    # instead of buffering an arbitrarily large body into memory.
+    MAX_CONTENT_LENGTH=30 * 1024 * 1024,
     # Re-check template files on every render so edits show up on a plain
     # browser refresh — no server restart needed (Waitress doesn't use the
     # Flask dev server's reloader, so this wouldn't happen by default).
     TEMPLATES_AUTO_RELOAD=True,
 )
 app.jinja_env.auto_reload = True
+# Secure cookie + trusted forwarded headers when (and only when) the
+# NLC_BEHIND_CLOUDFLARE env var says we're behind the Cloudflare tunnel.
+cloudflare_hardening.apply(app)
 
 # ---- Global singleton store (single-user local app) ----------------------
 _store: Store | None = None
@@ -83,13 +92,25 @@ def _pending_statuses() -> list:
 
 def _current_account() -> dict | None:
     """The logged-in account row, or None. Cached per request on flask.g.
-    Session stores the account's display name (its stable primary key)."""
+    Session stores the account's display name (its stable primary key) plus the
+    session_rev the login was issued under; a password change/reset bumps the
+    account's rev, which kills every session carrying the old value."""
     if not hasattr(g, "_account"):
         name = session.get("auth_user", "")
         acct = get_store().get_account_by_name(name) if name else None
-        # Only a fully-active account counts as logged in.
-        g._account = acct if (acct and acct["status"] == "active") else None
+        # Only a fully-active account with a still-current session counts.
+        ok = (acct and acct["status"] == "active"
+              and session.get("rev") == acct["session_rev"])
+        g._account = acct if ok else None
     return g._account
+
+
+def _client_ip() -> str:
+    """The visitor's IP for throttling/audit. Forwarded headers are only
+    trusted when we really are behind Cloudflare (they're spoofable otherwise)."""
+    if cloudflare_hardening.enabled():
+        return cloudflare_hardening.real_client_ip(request)
+    return request.remote_addr or ""
 
 
 def _current_user() -> str:
@@ -122,26 +143,53 @@ def _csrf_token() -> str:
     return tok
 
 
-# ---- Login throttle (in-memory, per username) ----------------------------
+# ---- Abuse throttle (in-memory, bounded) -----------------------------------
+# Keys are (kind, identifier) — e.g. ("login-email", <email>) or
+# ("login-ip", <ip>) — so a password spray is stopped per-account AND per-IP.
+# The map is hard-capped: unauthenticated bots posting random identifiers can't
+# grow it without bound (that was a memory-exhaustion vector).
 
-_FAILED_LOGINS: dict[str, list[float]] = {}
-_MAX_FAILS = 5
+_THROTTLE: dict[tuple[str, str], list[float]] = {}
+_THROTTLE_LOCK = threading.Lock()
 _FAIL_WINDOW = 900  # seconds (15 min)
+_THROTTLE_MAX_KEYS = 5000
+
+_MAX_FAILS_EMAIL = 5    # per email in the window
+_MAX_FAILS_IP = 20      # per source IP in the window (covers many emails)
 
 
-def _too_many_fails(username: str) -> bool:
+def _throttled(kind: str, ident: str, limit: int) -> bool:
+    """True if `ident` has hit `limit` recorded events inside the window."""
+    if not ident:
+        return False
     now = time.time()
-    recent = [t for t in _FAILED_LOGINS.get(username, []) if now - t < _FAIL_WINDOW]
-    _FAILED_LOGINS[username] = recent
-    return len(recent) >= _MAX_FAILS
+    with _THROTTLE_LOCK:
+        recent = [t for t in _THROTTLE.get((kind, ident), []) if now - t < _FAIL_WINDOW]
+        if recent:
+            _THROTTLE[(kind, ident)] = recent
+        else:
+            _THROTTLE.pop((kind, ident), None)
+        return len(recent) >= limit
 
 
-def _record_fail(username: str) -> None:
-    _FAILED_LOGINS.setdefault(username, []).append(time.time())
+def _throttle_hit(kind: str, ident: str) -> None:
+    if not ident:
+        return
+    now = time.time()
+    with _THROTTLE_LOCK:
+        _THROTTLE.setdefault((kind, ident), []).append(now)
+        if len(_THROTTLE) > _THROTTLE_MAX_KEYS:
+            # Drop everything outside the window first; if a flood of *active*
+            # keys still exceeds the cap, evict oldest-inserted (dict order).
+            for k in [k for k, v in _THROTTLE.items() if not v or now - v[-1] >= _FAIL_WINDOW]:
+                del _THROTTLE[k]
+            while len(_THROTTLE) > _THROTTLE_MAX_KEYS:
+                _THROTTLE.pop(next(iter(_THROTTLE)))
 
 
-def _clear_fails(username: str) -> None:
-    _FAILED_LOGINS.pop(username, None)
+def _throttle_clear(kind: str, ident: str) -> None:
+    with _THROTTLE_LOCK:
+        _THROTTLE.pop((kind, ident), None)
 
 
 # ---- Password helpers -----------------------------------------------------
@@ -157,7 +205,32 @@ def _hash_password(pw: str) -> str:
 
 
 def _mail_config() -> dict:
-    return mailer.merged_config(get_store().get_setting("mail_config", {}))
+    cfg = mailer.merged_config(get_store().get_setting("mail_config", {}))
+    # The stored password is encrypted at rest (see vault.py); hand callers the
+    # usable plaintext. Legacy plaintext values pass through unchanged.
+    if cfg.get("password"):
+        cfg["password"] = vault.decrypt(cfg["password"])
+    return cfg
+
+
+def _audit(action: str, detail: str = "", actor: str | None = None) -> None:
+    """Append to the security audit trail (who, from where, what)."""
+    get_store().log_event(
+        datetime.now().isoformat(timespec="seconds"),
+        actor if actor is not None else _current_user(),
+        _client_ip(), action, detail)
+
+
+def _send_verify_code(name: str, email: str) -> bool:
+    """Generate + store a fresh 6-digit code and email it to the address the
+    sign-up claims to own. Returns False when the mail couldn't be sent (e.g.
+    SMTP not configured yet) — the request still exists, just unverified."""
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    get_store().set_verify_code(name, code, datetime.now().isoformat(timespec="seconds"))
+    ok, err = mailer.send_verify_code(_mail_config(), email, code)
+    if not ok:
+        logging.warning("Could not send verification code to %s: %s", email, err)
+    return ok
 
 
 def _pending_count() -> int:
@@ -263,7 +336,7 @@ def manager_required(fn):
 
 # ---- Global request gate: CSRF + authentication ---------------------------
 
-_PUBLIC_ENDPOINTS = {"login", "signup", "logout", "setup", "static",
+_PUBLIC_ENDPOINTS = {"login", "signup", "verify", "logout", "setup", "static",
                      "manifest", "service_worker"}
 
 
@@ -310,6 +383,13 @@ def _forbidden(_e):
 def _bad_request(e):
     desc = getattr(e, "description", "Bad request.")
     return render_template("error.html", code=400, title="Bad request", message=desc), 400
+
+
+@app.errorhandler(413)
+def _too_large(_e):
+    return render_template("error.html", code=413, title="File too large",
+                           message="That upload is bigger than the 30 MB limit. "
+                                   "Export a smaller file and try again."), 413
 
 
 # ---- Installable web app (PWA) -------------------------------------------
@@ -556,7 +636,9 @@ def setup():
                 get_store().upsert_staff(name, "Admin", date.today())  # ensure Admin role
             session.clear()
             session["auth_user"] = name
+            session["rev"] = (get_store().get_account_by_name(name) or {}).get("session_rev", 0)
             session.permanent = True
+            _audit("setup", f"first admin created ({email})", actor=name)
             return redirect(url_for("overview"))
     return render_template("setup.html", error=error)
 
@@ -575,22 +657,28 @@ def login():
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
         remember = request.form.get("remember") == "on"
-        if _too_many_fails(email):
+        ip = _client_ip()
+        if _throttled("login-email", email, _MAX_FAILS_EMAIL) or \
+           _throttled("login-ip", ip, _MAX_FAILS_IP):
             error = "Too many failed attempts. Please wait a few minutes and try again."
         else:
             acct = get_store().get_account_by_email(email)
             pw_ok = bool(acct and acct["password_hash"]
                          and check_password_hash(acct["password_hash"], password))
             if not pw_ok:
-                _record_fail(email)
+                _throttle_hit("login-email", email)
+                _throttle_hit("login-ip", ip)
+                _audit("login_failed", email, actor="")
                 error = "Invalid email or password."  # generic: no user enumeration
             elif acct["status"] != "active":
                 error = "Your account is awaiting administrator approval."
             else:
-                _clear_fails(email)
+                _throttle_clear("login-email", email)
                 session.clear()  # fresh session on login (prevents fixation)
                 session["auth_user"] = acct["name"]
+                session["rev"] = acct["session_rev"]
                 session.permanent = remember  # Remember me -> 7-day cookie
+                _audit("login", email, actor=acct["name"])
                 return redirect(_safe_next(nxt))
 
     return render_template("login.html", email=email, next=nxt, error=error)
@@ -598,6 +686,8 @@ def login():
 
 @app.route("/logout")
 def logout():
+    if session.get("auth_user"):
+        _audit("logout", actor=session.get("auth_user", ""))
     session.clear()
     return redirect(url_for("login"))
 
@@ -605,12 +695,13 @@ def logout():
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
     """Self sign-up: name + company email + a password you choose creates a
-    PENDING account. Admins are alerted (in-app + best-effort email); once an
-    admin approves it, you can sign in with your email + password."""
+    PENDING account, then a 6-digit code is emailed to that address to prove
+    the person really controls it (anyone can *type* a company email). Admins
+    are alerted (in-app + best-effort email); once an admin approves it, you
+    can sign in with your email + password."""
     if _current_account():
         return redirect(url_for("overview"))
     error = ""
-    done = False
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         email = request.form.get("email", "").strip().lower()
@@ -633,11 +724,67 @@ def signup():
             except sqlite3.IntegrityError:
                 return render_template("signup.html",
                                        error="That name or email is already in use.")
+            _audit("signup", f"access request for {email}", actor=name)
             # Best-effort admin heads-up; the reliable alert is the in-app
             # pending badge/banner, so a mail failure never matters here.
             _notify_admins_of_signup(name, email)
-            done = True
-    return render_template("signup.html", error=error, done=done)
+            sent = _send_verify_code(name, email)
+            return redirect(url_for("verify", email=email, sent="1" if sent else "0"))
+    return render_template("signup.html", error=error, done=False)
+
+
+_VERIFY_CODE_TTL = 1800  # seconds a mailed code stays valid (30 min)
+
+
+@app.route("/verify", methods=["GET", "POST"])
+def verify():
+    """Prove ownership of the email a sign-up claimed, by entering the code
+    that was mailed to it. Public (the requester has no session yet), but it
+    only flips email_verified — the account still needs admin approval."""
+    email = request.values.get("email", "").strip().lower()
+    acct = get_store().get_account_by_email(email) if email else None
+    if not acct:
+        return redirect(url_for("signup"))
+    if acct["email_verified"]:
+        return render_template("verify.html", email=email, verified=True,
+                               error="", sent=True)
+
+    error = ""
+    sent = request.values.get("sent", "1") == "1"
+    if request.method == "POST":
+        if request.form.get("resend"):
+            if _throttled("verify-resend", email, 3):
+                error = "Too many codes requested. Please wait a few minutes."
+            else:
+                _throttle_hit("verify-resend", email)
+                sent = _send_verify_code(acct["name"], email)
+                if not sent:
+                    error = ("The code couldn't be emailed (outbound mail may not be "
+                             "set up yet). An administrator can still verify you in person.")
+        else:
+            code = request.form.get("code", "").strip()
+            sent_at = None
+            try:
+                sent_at = datetime.fromisoformat(acct["verify_sent_at"] or "")
+            except ValueError:
+                pass
+            expired = (not sent_at
+                       or (datetime.now() - sent_at).total_seconds() > _VERIFY_CODE_TTL)
+            if _throttled("verify-code", email, 10):
+                error = "Too many attempts. Request a new code and try again later."
+            elif not (code and acct["verify_code"]
+                      and secrets.compare_digest(code, acct["verify_code"])):
+                _throttle_hit("verify-code", email)
+                error = "That code isn't right. Check the email and try again."
+            elif expired:
+                error = "That code has expired — request a new one below."
+            else:
+                get_store().mark_email_verified(acct["name"])
+                _audit("email_verified", email, actor=acct["name"])
+                return render_template("verify.html", email=email, verified=True,
+                                       error="", sent=True)
+    return render_template("verify.html", email=email, verified=False,
+                           error=error, sent=sent)
 
 
 @app.route("/account", methods=["GET", "POST"])
@@ -659,6 +806,7 @@ def account_password():
                     error = "That email is already used by another account."
                 else:
                     get_store().set_email(acct["name"], new_email)
+                    _audit("email_changed", f"sign-in email set to {new_email}")
                     msg = "Sign-in email updated."
                     acct = _current_account()
 
@@ -675,6 +823,14 @@ def account_password():
                 error = "The new passwords don't match."
             else:
                 get_store().set_password(acct["name"], _hash_password(new))
+                # The bump above revoked every session for this account —
+                # including this one. Re-stamp so the user changing their own
+                # password stays signed in; everyone else has to log in again.
+                fresh = get_store().get_account_by_name(acct["name"])
+                session["rev"] = fresh["session_rev"] if fresh else None
+                if hasattr(g, "_account"):
+                    del g._account
+                _audit("password_changed", "changed own password")
                 msg = (msg + " Password updated.").strip()
     return render_template("account_password.html", error=error, msg=msg, acct=_current_account())
 
@@ -857,6 +1013,7 @@ def project_delete():
     if p:
         item_keys = [d["item_key"] for d in p["documents"]]
         get_store().delete_project(pkey, item_keys)
+        _audit("project_deleted", f"{p['client']} ({len(item_keys)} items)")
     return redirect(url_for("projects",
                              filter=request.form.get("filter", "All"),
                              done=request.form.get("done", "0")))
@@ -915,6 +1072,8 @@ def clients_delete():
             get_store().delete_project(k, [d["item_key"] for d in p["documents"]])
             count += 1
     word = "client" if count == 1 else "clients"
+    if count:
+        _audit("clients_deleted", f"{count} {word} bulk-deleted")
     return redirect(url_for("clients", msg=f"Deleted {count} {word}."))
 
 
@@ -950,6 +1109,7 @@ def staff_add():
                                    email=email, email_verified=1, today=date.today())
     except sqlite3.IntegrityError:
         return redirect(url_for("staff", msg="That name or email is already in use.", mt="err"))
+    _audit("staff_added", f"{name} <{email}> as {role}")
     return redirect(url_for("staff",
                             msg=f"{name} added as {role}. Give them the password you just set.",
                             mt="ok"))
@@ -965,6 +1125,7 @@ def staff_remove():
         return redirect(url_for("staff", msg="You can't remove the last admin.", mt="err"))
     if name:
         get_store().remove_staff(name)
+        _audit("staff_removed", name)
         return redirect(url_for("staff", msg=f"{name} removed.", mt="ok"))
     return redirect(url_for("staff"))
 
@@ -980,6 +1141,7 @@ def staff_role():
         return redirect(url_for("staff", msg="You can't demote the last admin.", mt="err"))
     if name:
         get_store().upsert_staff(name, role, date.today())
+        _audit("role_changed", f"{name} -> {role}")
         return redirect(url_for("staff", msg=f"{name} updated to {role}.", mt="ok"))
     return redirect(url_for("staff"))
 
@@ -1006,6 +1168,7 @@ def staff_reset():
         get_store().set_login(name, email, _hash_password(password))
     except sqlite3.IntegrityError:
         return redirect(url_for("staff", msg="That email is already in use.", mt="err"))
+    _audit("login_reset", f"credentials reset for {name} <{email}>")
     return redirect(url_for("staff", msg=f"Login updated for {name}. Give them the new password.", mt="ok"))
 
 
@@ -1017,7 +1180,20 @@ def staff_approve():
     if role not in ("Viewer", "Manager", "Admin"):
         role = "Viewer"
     if name:
+        acct = get_store().get_account_by_name(name)
+        # An unverified email means nobody has proven they own that address —
+        # the request could be an outsider typing a colleague's email. Block
+        # approval unless the admin explicitly overrides (verified in person).
+        if acct and not acct["email_verified"] and request.form.get("force") != "1":
+            return redirect(url_for(
+                "staff", mt="err",
+                msg=f"{name}'s email is unverified. Approve only after they enter their "
+                    f"emailed code, or tick the override box if you've confirmed it's "
+                    f"really them."))
         get_store().approve_account(name, role)
+        _audit("account_approved",
+               f"{name} approved as {role}"
+               + ("" if (acct and acct["email_verified"]) else " (email unverified — admin override)"))
         return redirect(url_for("staff", msg=f"Account approved as {role}.", mt="ok"))
     return redirect(url_for("staff"))
 
@@ -1028,8 +1204,17 @@ def staff_reject():
     name = request.form.get("name", "")
     if name:
         get_store().remove_staff(name)
+        _audit("signup_rejected", name)
         return redirect(url_for("staff", msg="Sign-up request rejected.", mt="ok"))
     return redirect(url_for("staff"))
+
+
+@app.route("/audit")
+@admin_required
+def audit():
+    """Security audit trail: logins, failures, account/credential changes,
+    imports, deletions, settings edits. Append-only; newest first."""
+    return render_template("audit.html", events=get_store().recent_events(300))
 
 
 @app.route("/settings")
@@ -1066,8 +1251,14 @@ def settings_mail():
     saved["use_tls"] = request.form.get("use_tls") == "on"
     pw = request.form.get("password", "")
     if pw:
-        saved["password"] = pw
+        saved["password"] = vault.encrypt(pw)
+    elif saved.get("password"):
+        # Upgrade a legacy plaintext password to encrypted-at-rest in place.
+        saved["password"] = vault.encrypt(saved["password"])
     get_store().set_setting("mail_config", saved)
+    _audit("mail_settings_saved",
+           f"host={saved['host']} sender={saved['sender']}"
+           + (" (password updated)" if pw else ""))
     return redirect(url_for("settings", msg="Mail settings saved."))
 
 
@@ -1091,6 +1282,7 @@ def settings_days():
     except (ValueError, KeyError):
         days = _overdue_days()
     get_store().set_setting("overdue_days", days)
+    _audit("settings_changed", f"overdue_days={days}")
     return redirect(url_for("settings", msg=f"Overdue threshold set to {days} days."))
 
 
@@ -1099,6 +1291,7 @@ def settings_days():
 def settings_statuses():
     statuses = request.form.getlist("statuses")
     get_store().set_setting("pending_statuses", statuses)
+    _audit("settings_changed", f"pending_statuses ({len(statuses)} selected)")
     return redirect(url_for("settings", msg="Pending statuses saved."))
 
 
@@ -1198,6 +1391,8 @@ def import_run():
         date.today(),
     )
     get_store().save_mapping(ctx.get("sig", ""), mapping, date.today())
+    _audit("import_run", f"{ctx.get('filename', '?')}: {stats.get('new', 0)} new, "
+                         f"{stats.get('updated', 0)} updated")
 
     try:
         Path(tmp_path).unlink(missing_ok=True)
@@ -1231,7 +1426,13 @@ def import_cancel():
 # required for team hosting. (Use "127.0.0.1" to restrict to this machine only.)
 # The firewall must allow inbound TCP 5000 from the internal network for this to
 # be reachable; keep it off the public internet — the DB holds client data.
-BIND_HOST = "0.0.0.0"
+#
+# Behind the Cloudflare tunnel (NLC_BEHIND_CLOUDFLARE set) the default flips to
+# loopback: cloudflared runs on this same machine, and binding wider would let
+# LAN/VPN traffic skip the Cloudflare Access gate and talk to the app directly.
+# NLC_BIND_HOST overrides either default explicitly.
+BIND_HOST = (os.environ.get("NLC_BIND_HOST", "").strip()
+             or ("127.0.0.1" if cloudflare_hardening.enabled() else "0.0.0.0"))
 # LOCAL_HOST is only for talking to ourselves — the "already running?" check and
 # the auto-opened browser tab. A browser can't open http://0.0.0.0:5000, and you
 # can't connect() to 0.0.0.0 as a client, so those always use the loopback.

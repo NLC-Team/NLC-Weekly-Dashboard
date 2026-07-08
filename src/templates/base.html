@@ -204,6 +204,7 @@ label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase
              border-radius:9px;font-size:11px;font-weight:700;text-align:center;line-height:18px">{{ pending_count }}</span>{% endif %}</a>
   <a href="{{ url_for('import_view') }}" class="{{ 'active' if request.endpoint in ('import_view','import_upload','import_run') }}">Import</a>
   <a href="{{ url_for('settings') }}"  class="{{ 'active' if request.endpoint == 'settings' }}">Settings</a>
+  <a href="{{ url_for('audit') }}"     class="{{ 'active' if request.endpoint == 'audit' }}">Audit Log</a>
   <a href="{{ url_for('clients') }}"   class="{{ 'active' if request.endpoint == 'clients' }}" style="color:#fca5a5">Delete Clients</a>
   {% endif %}
 

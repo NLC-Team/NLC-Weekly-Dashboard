@@ -1,0 +1,47 @@
+{% extends "auth_base.html" %}
+{% block title %}Verify your email — NLC Dashboard{% endblock %}
+{% block auth %}
+<h1>Verify your email</h1>
+
+{% if verified %}
+<div class="msg msg-ok">
+  <strong>{{ email }}</strong> is verified. Your request is now waiting for an
+  administrator to approve it — once they do, you can sign in with your email
+  and password.
+</div>
+<div class="auth-foot"><a href="{{ url_for('login') }}">Back to sign in</a></div>
+{% else %}
+
+{% if sent %}
+<p class="sub">We emailed a 6-digit code to <strong>{{ email }}</strong>.
+Enter it below to prove this address is yours.</p>
+{% else %}
+<div class="msg msg-err">
+  We couldn't email a code to <strong>{{ email }}</strong> right now (outbound
+  mail may not be set up yet). Your request was still submitted — an
+  administrator can verify your identity in person, or you can retry below.
+</div>
+{% endif %}
+
+{% if error %}<div class="msg msg-err">{{ error }}</div>{% endif %}
+
+<form method="post" action="{{ url_for('verify') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="email" value="{{ email }}">
+  <label for="code">Verification code</label>
+  <input type="text" id="code" name="code" inputmode="numeric" pattern="[0-9]{6}"
+         maxlength="6" placeholder="123456" autocomplete="one-time-code" autofocus required>
+  <p class="hint">The code expires 30 minutes after it was sent.</p>
+  <button type="submit" class="btn">Verify email</button>
+</form>
+
+<form method="post" action="{{ url_for('verify') }}" style="margin-top:12px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="email" value="{{ email }}">
+  <input type="hidden" name="resend" value="1">
+  <button type="submit" class="btn" style="background:#e3e8ee;color:#0f1923">Send a new code</button>
+</form>
+
+<div class="auth-foot"><a href="{{ url_for('login') }}">Back to sign in</a></div>
+{% endif %}
+{% endblock %}

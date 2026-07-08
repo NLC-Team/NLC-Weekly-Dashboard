@@ -96,6 +96,20 @@ def send_signup_notification(cfg: dict, to, applicant_name: str,
     return send_email(cfg, to, "New NLC Financial Dashboard access request", body)
 
 
+def send_verify_code(cfg: dict, to_email: str, code: str) -> tuple[bool, str]:
+    """Send the 6-digit email-ownership code a new sign-up must enter. This is
+    what proves the person actually controls the @company address they typed."""
+    body = (
+        "Your NLC Financial Dashboard verification code is:\n\n"
+        f"        {code}\n\n"
+        "Enter it on the verification page to confirm this email address.\n"
+        "The code expires in 30 minutes.\n\n"
+        "If you didn't request access to the dashboard, ignore this email —\n"
+        "without the code, the request can't be completed as you.\n"
+    )
+    return send_email(cfg, to_email, "NLC Financial Dashboard — your verification code", body)
+
+
 def send_test(cfg: dict, to_email: str) -> tuple[bool, str]:
     body = ("This is a test message from the NLC Financial Dashboard.\n\n"
             "If you received this, outbound email is working correctly.\n")

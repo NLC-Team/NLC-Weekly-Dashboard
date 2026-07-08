@@ -4,6 +4,7 @@ matplotlib
 flask
 waitress       # production WSGI server for the web dashboard
 openpyxl       # read .xlsx / .xls Excel imports
+cryptography   # at-rest encryption of the stored SMTP password (src/vault.py)
 
 # Build-only (for producing the standalone .exe)
 pyinstaller
