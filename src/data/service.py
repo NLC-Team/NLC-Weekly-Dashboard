@@ -42,6 +42,13 @@ def dashboard_data(store: Store, today: date, overdue_days: int) -> dict:
             it["overdue"] = False
             it["days_overdue"] = 0
     projects = analytics.build_projects(items, doc_states, project_states)
+    # Give every item the same effective return type as its project (a manual
+    # reclassification on Returns & Bookkeeping wins over the raw CSV value),
+    # so Overview/Overdue/Staff views that group by type stay in sync with it.
+    type_by_pkey = {p["project_key"]: p["return_type"] for p in projects}
+    for it in items:
+        pkey = it.get("project_key") or ("c:" + it["client"].strip().lower())
+        it["return_type"] = type_by_pkey[pkey]
     return {
         "items": items,
         "totals": analytics.totals(items),

@@ -80,7 +80,13 @@ def per_assignee(items: list[dict]) -> list[dict]:
         ages = [it["age_days"] for it in group]
         oldest = max(group, key=lambda x: x["age_days"]) if group else None
         # How many of each specific statement type make up this person's workload.
-        type_counts = Counter(normalize_return_type(it.get("return_type_raw")) for it in group)
+        # `return_type` (set by service.dashboard_data) reflects any manual
+        # reclassification on Returns & Bookkeeping; fall back to the raw CSV
+        # value when called directly on items that don't have it (e.g. tests).
+        type_counts = Counter(
+            it.get("return_type") or normalize_return_type(it.get("return_type_raw"))
+            for it in group
+        )
         rows.append(
             {
                 "assignee": assignee,

@@ -118,7 +118,7 @@
         <td><a href="{{ url_for('projects', pkey=it.project_key) }}" style="color:var(--accent);font-weight:600;text-decoration:none"
                title="Open {{ it.client }} in the full return view">{{ it.client }}</a></td>
         <td style="font-weight:600">{{ it.title }}</td>
-        <td>{{ it.return_type_raw or 'Unclassified' }}</td>
+        <td>{{ it.return_type }}</td>
         <td>{{ it.status }}</td>
         <td style="font-weight:700">{{ it.age_days }}</td>
       </tr>

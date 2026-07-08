@@ -210,6 +210,21 @@ def _inject_user():
     }
 
 
+@app.after_request
+def _no_store_dynamic(resp):
+    """Never let the browser cache dynamic pages/data. This is a live, multi-user
+    dashboard: after someone reclassifies a return (or imports, marks received,
+    etc.) every tab must reflect it on the next load, not show a browser-cached
+    copy. Static brand assets (/static, manifest) stay cacheable — the service
+    worker handles those. Mirrors sw.js's 'always live from network' policy."""
+    path = request.path or ""
+    if not (path.startswith("/static/") or path == "/manifest.webmanifest"):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+    return resp
+
+
 # ---- Access decorators ----------------------------------------------------
 
 def login_required(fn):
@@ -407,7 +422,7 @@ def _workload_chart(overdue_items: list) -> str | None:
             who = (it.get("assignee") or "").strip() or "Unassigned"
             if who.lower() == "(unassigned)":
                 who = "Unassigned"
-            t = config.normalize_return_type(it.get("return_type_raw"))
+            t = it["return_type"]
             by_person.setdefault(who, Counter())[t] += 1
             overall[t] += 1
         if not by_person:
@@ -725,17 +740,15 @@ def projects():
         s_items = [it for it in data["items"] if it["assignee"] == staff]
         type_counts: dict[str, int] = {}
         for it in s_items:
-            t = config.normalize_return_type(it.get("return_type_raw"))
+            t = it["return_type"]
             type_counts[t] = type_counts.get(t, 0) + 1
         staff_chips = sorted(type_counts, key=str.lower)
         staff_counts = {"All": len(s_items)}
         staff_counts.update(type_counts)
         shown = (s_items if ft == "All" else
-                 [it for it in s_items
-                  if config.normalize_return_type(it.get("return_type_raw")) == ft])
+                 [it for it in s_items if it["return_type"] == ft])
         staff_items = sorted(shown, key=lambda x: (
-            config.normalize_return_type(x.get("return_type_raw")),
-            x["client"].lower(), -x["age_days"]))
+            x["return_type"], x["client"].lower(), -x["age_days"]))
         return render_template(
             "projects.html", staff_mode=True, staff=staff, staff_items=staff_items,
             all_staff_names=all_staff_names, filter_type=ft,
