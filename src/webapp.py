@@ -425,8 +425,8 @@ def _workload_chart(overdue_items: list) -> str | None:
         totals = [sum(by_person[p].values()) for p in people]
         ymax = max(totals + [1])
 
-        fig_w = max(6.5, n * 0.9)
-        fig = Figure(figsize=(fig_w, 4.6), facecolor="white")
+        fig_w = max(7.5, n * 1.05)
+        fig = Figure(figsize=(fig_w, 5.4), facecolor="white")
         ax = fig.add_subplot(111)
 
         bottoms = [0] * n
@@ -438,23 +438,25 @@ def _workload_chart(overdue_items: list) -> str | None:
             for xi, v, b in zip(x, vals, bottoms):
                 if v > 0 and v / ymax >= 0.045:
                     ax.text(xi, b + v / 2, str(v), ha="center", va="center",
-                            fontsize=8, fontweight="700", color="white")
+                            fontsize=10, fontweight="700", color="white")
             bottoms = [b + v for b, v in zip(bottoms, vals)]
 
         # Grand total on top of each employee's column.
         for xi, tot in zip(x, totals):
             ax.text(xi, tot + ymax * 0.02, str(tot), ha="center", va="bottom",
-                    fontsize=9, fontweight="800", color="#0f1923")
+                    fontsize=11, fontweight="800", color="#0f1923")
 
         ax.set_xticks(x)
-        ax.set_xticklabels(people, rotation=35, ha="right", fontsize=10, fontweight="600")
+        ax.set_xticklabels(people, rotation=35, ha="right", fontsize=12, fontweight="600")
         ax.set_ylim(0, ymax * 1.18)
         _style_ax(ax, "Overdue Statements by Employee")
+        ax.set_title(ax.get_title(), fontsize=15)
+        ax.tick_params(axis="y", labelsize=11)
         # Legend outside on the right; _fig_to_b64 saves with bbox_inches='tight'
         # so it's included without squeezing the bars.
-        ax.legend(fontsize=11, frameon=False, loc="upper left",
+        ax.legend(fontsize=12, frameon=False, loc="upper left",
                   bbox_to_anchor=(1.01, 1.0), title="Statement type",
-                  title_fontsize=12, handlelength=1.2, handletextpad=0.5)
+                  title_fontsize=13, handlelength=1.2, handletextpad=0.5)
 
         fig.tight_layout(pad=1.6)
         return _fig_to_b64(fig)
