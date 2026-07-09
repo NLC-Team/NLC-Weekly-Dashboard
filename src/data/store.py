@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date
+import threading
+from datetime import date, timedelta
 from pathlib import Path
 
 import config
@@ -84,6 +85,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
     action TEXT,
     detail TEXT
 );
+-- Weekly rollover of the audit trail: the live audit_log only holds the current
+-- week; older events are MOVED here (never deleted) so the live view stays short
+-- while the full history is preserved for admins, partitioned by ISO week.
+CREATE TABLE IF NOT EXISTS audit_archive (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts     TEXT,
+    actor  TEXT,
+    ip     TEXT,
+    action TEXT,
+    detail TEXT,
+    week   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_audit_archive_week ON audit_archive(week);
 """
 
 # Columns added after the first release; applied to older databases on open.
@@ -117,15 +131,47 @@ class Store:
     def __init__(self, db_path: str | Path | None = None):
         self.db_path = Path(db_path) if db_path else config.default_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(SCHEMA)
+        # Each thread gets its OWN connection (see the `conn` property). A single
+        # connection shared across Waitress's worker threads is NOT safe: concurrent
+        # use corrupts cursor/result state — observed under load as SELECT COUNT(*)
+        # returning no row, "bad parameter or other API misuse", and stray
+        # IndexErrors. Per-thread connections + WAL let many readers and the single
+        # writer run without stepping on each other.
+        self._local = threading.local()
+        # Serialises multi-statement writes (archive-then-delete, import batches)
+        # so their steps commit as a unit and never interleave with another write.
+        self._write_lock = threading.RLock()
+        conn = self.conn                # opens this (init) thread's connection
+        conn.executescript(SCHEMA)
         self._migrate()
-        self.conn.commit()
+        conn.commit()
         # Bumped on every write that changes what the dashboard shows, so the
         # web layer can cache computed dashboard data and only recompute when
         # this number moves. Starts at 1 so a fresh (uncached) key never matches.
         self._data_version = 1
+
+    def _new_conn(self) -> sqlite3.Connection:
+        """Open a fresh connection tuned for shared, multi-threaded use."""
+        conn = sqlite3.connect(str(self.db_path), check_same_thread=False, timeout=5.0)
+        conn.row_factory = sqlite3.Row
+        #   - WAL: readers keep reading while the one writer writes (no whole-file
+        #     lock) — the dashboard is read-heavy with occasional writes.
+        #   - busy_timeout: a writer that finds the DB momentarily locked waits up
+        #     to 5s and retries instead of instantly raising "database is locked".
+        #   - synchronous=NORMAL: the safe, faster durability level to pair with WAL.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """This thread's own SQLite connection (created on first use)."""
+        c = getattr(self._local, "conn", None)
+        if c is None:
+            c = self._new_conn()
+            self._local.conn = c
+        return c
 
     @property
     def data_version(self) -> int:
@@ -162,7 +208,10 @@ class Store:
         )
 
     def close(self):
-        self.conn.close()
+        c = getattr(self._local, "conn", None)
+        if c is not None:
+            c.close()
+            self._local.conn = None
 
     # ---- settings -------------------------------------------------------
     def get_setting(self, key: str, default=None):
@@ -223,53 +272,57 @@ class Store:
         than 1-2 queries per row.
         """
         iso = today.isoformat()
-        existing = {
-            r["item_key"] for r in self.conn.execute("SELECT item_key FROM items")
-        }
+        # Whole import runs under the write lock: the read of existing keys and
+        # the batched insert/update must not interleave with another thread's
+        # write on the shared connection.
+        with self._write_lock:
+            existing = {
+                r["item_key"] for r in self.conn.execute("SELECT item_key FROM items")
+            }
 
-        inserts: list[tuple] = []
-        updates: list[tuple] = []
-        for rec in pending_records:
-            # Empty owner -> NULL so a re-import without the column mapped keeps
-            # any owner already on file (see COALESCE in the UPDATE below).
-            client_owner = (rec.get("client_owner") or "").strip() or None
-            if rec["item_key"] not in existing:
-                # first_seen uses the real source date when available, else today.
-                first_seen = _iso(rec.get("source_date")) or iso
-                inserts.append((
-                    rec["item_key"], rec["assignee"], rec["client"], client_owner,
-                    rec["title"], rec["status"], _iso(rec.get("source_date")),
-                    first_seen, iso, rec.get("project_key"), rec.get("return_type_raw"),
-                ))
-            else:
-                updates.append((
-                    rec["assignee"], rec["client"], client_owner, rec["title"],
-                    rec["status"], _iso(rec.get("source_date")), iso,
-                    rec.get("project_key"), rec.get("return_type_raw"), rec["item_key"],
-                ))
+            inserts: list[tuple] = []
+            updates: list[tuple] = []
+            for rec in pending_records:
+                # Empty owner -> NULL so a re-import without the column mapped keeps
+                # any owner already on file (see COALESCE in the UPDATE below).
+                client_owner = (rec.get("client_owner") or "").strip() or None
+                if rec["item_key"] not in existing:
+                    # first_seen uses the real source date when available, else today.
+                    first_seen = _iso(rec.get("source_date")) or iso
+                    inserts.append((
+                        rec["item_key"], rec["assignee"], rec["client"], client_owner,
+                        rec["title"], rec["status"], _iso(rec.get("source_date")),
+                        first_seen, iso, rec.get("project_key"), rec.get("return_type_raw"),
+                    ))
+                else:
+                    updates.append((
+                        rec["assignee"], rec["client"], client_owner, rec["title"],
+                        rec["status"], _iso(rec.get("source_date")), iso,
+                        rec.get("project_key"), rec.get("return_type_raw"), rec["item_key"],
+                    ))
 
-        if inserts:
-            self.conn.executemany(
-                "INSERT INTO items(item_key, assignee, client, client_owner, title, "
-                "last_status, source_date, first_seen, last_seen, resolved, resolved_at, "
-                "project_key, return_type_raw) "
-                "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
-                inserts,
-            )
-        if updates:
-            self.conn.executemany(
-                "UPDATE items SET assignee=?, client=?, "
-                "client_owner=COALESCE(?, client_owner), title=?, last_status=?, "
-                "source_date=COALESCE(?, source_date), last_seen=?, resolved=0, "
-                "resolved_at=NULL, project_key=?, return_type_raw=? WHERE item_key=?",
-                updates,
-            )
+            if inserts:
+                self.conn.executemany(
+                    "INSERT INTO items(item_key, assignee, client, client_owner, title, "
+                    "last_status, source_date, first_seen, last_seen, resolved, resolved_at, "
+                    "project_key, return_type_raw) "
+                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
+                    inserts,
+                )
+            if updates:
+                self.conn.executemany(
+                    "UPDATE items SET assignee=?, client=?, "
+                    "client_owner=COALESCE(?, client_owner), title=?, last_status=?, "
+                    "source_date=COALESCE(?, source_date), last_seen=?, resolved=0, "
+                    "resolved_at=NULL, project_key=?, return_type_raw=? WHERE item_key=?",
+                    updates,
+                )
 
-        # Additive by design: items absent from this import are left untouched
-        # (still active), so a new or partial file never wipes prior data.
-        self.conn.commit()
-        self._bump()
-        return {"new": len(inserts), "updated": len(updates)}
+            # Additive by design: items absent from this import are left untouched
+            # (still active), so a new or partial file never wipes prior data.
+            self.conn.commit()
+            self._bump()
+            return {"new": len(inserts), "updated": len(updates)}
 
     def active_items(self) -> list[dict]:
         """Current pending items (latest import, not resolved), with history.
@@ -520,14 +573,62 @@ class Store:
             "ORDER BY id DESC LIMIT ?", (int(limit),)).fetchall()
         return [dict(r) for r in rows]
 
+    @staticmethod
+    def _week_label(d: date) -> str:
+        """ISO year + week, e.g. '2026-W28' — sorts chronologically as a string."""
+        iso = d.isocalendar()
+        return f"{iso[0]}-W{iso[1]:02d}"
+
+    def rotate_audit(self, today: date) -> int:
+        """Move every audit event from before the current ISO week out of the live
+        log and into audit_archive (tagged by the week it happened). The live log
+        is left holding only this week's events. Nothing is destroyed — the archive
+        keeps the full history. Idempotent: running it twice in a week is a no-op.
+        Returns how many events were archived."""
+        monday = today - timedelta(days=today.weekday())  # Monday 00:00 this week
+        cutoff = monday.isoformat()
+        with self._write_lock:
+            rows = self.conn.execute(
+                "SELECT ts, actor, ip, action, detail FROM audit_log WHERE ts < ?",
+                (cutoff,)).fetchall()
+            if not rows:
+                return 0
+            payload = []
+            for r in rows:
+                d = _to_date((r["ts"] or "")[:10]) or monday
+                payload.append((r["ts"], r["actor"], r["ip"], r["action"],
+                                r["detail"], self._week_label(d)))
+            self.conn.executemany(
+                "INSERT INTO audit_archive(ts, actor, ip, action, detail, week) "
+                "VALUES(?, ?, ?, ?, ?, ?)", payload)
+            self.conn.execute("DELETE FROM audit_log WHERE ts < ?", (cutoff,))
+            self.conn.commit()
+            return len(rows)
+
+    def archived_weeks(self) -> list[dict]:
+        """Each archived ISO week (newest first) with its event count and span."""
+        rows = self.conn.execute(
+            "SELECT week, COUNT(*) AS n, MIN(ts) AS first_ts, MAX(ts) AS last_ts "
+            "FROM audit_archive GROUP BY week ORDER BY week DESC").fetchall()
+        return [{"week": r["week"], "count": r["n"],
+                 "first_ts": r["first_ts"], "last_ts": r["last_ts"]} for r in rows]
+
+    def archived_events(self, week: str, limit: int = 5000) -> list[dict]:
+        """All events in one archived week, newest first."""
+        rows = self.conn.execute(
+            "SELECT ts, actor, ip, action, detail FROM audit_archive "
+            "WHERE week=? ORDER BY id DESC LIMIT ?", (week, int(limit))).fetchall()
+        return [dict(r) for r in rows]
+
     # ---- delete a client / project entirely ----------------------------
     def delete_project(self, project_key: str, item_keys: list[str]) -> None:
         """Permanently remove a client/project: its items, document state,
         and project state. Frees the space so it no longer appears anywhere.
         """
-        for ik in item_keys:
-            self.conn.execute("DELETE FROM items WHERE item_key=?", (ik,))
-            self.conn.execute("DELETE FROM doc_state WHERE item_key=?", (ik,))
-        self.conn.execute("DELETE FROM project_state WHERE project_key=?", (project_key,))
-        self.conn.commit()
-        self._bump()
+        with self._write_lock:
+            for ik in item_keys:
+                self.conn.execute("DELETE FROM items WHERE item_key=?", (ik,))
+                self.conn.execute("DELETE FROM doc_state WHERE item_key=?", (ik,))
+            self.conn.execute("DELETE FROM project_state WHERE project_key=?", (project_key,))
+            self.conn.commit()
+            self._bump()

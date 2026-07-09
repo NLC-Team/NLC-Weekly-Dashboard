@@ -1,18 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Audit log <span class="text-muted" style="font-size:14px;font-weight:600">· this week ({{ this_week }})</span></h1>
-<p class="subtitle">Security trail: sign-ins and failures, account and credential changes,
-imports, deletions, and settings edits. Newest first. The live log keeps only the
-current week; older events roll into the weekly <strong>archive</strong> below.</p>
+<h1>Audit archive <span class="text-muted" style="font-size:14px;font-weight:600">· {{ week }}</span></h1>
+<p class="subtitle">Archived security events for ISO week {{ week }}. Admin-only; preserved,
+not deleted. <a href="{{ url_for('audit') }}" style="color:var(--accent);font-weight:600">← Back to this week</a></p>
 
 {% if weeks %}
 <div class="card mb-2">
   <div class="card-title">Archived weeks</div>
-  <p class="text-muted" style="font-size:12px;margin-bottom:10px">
-    Past weeks are preserved here (admin-only) and never deleted.</p>
   <div class="chips">
     {% for w in weeks %}
-    <a class="chip" href="{{ url_for('audit_archive', week=w.week) }}"
+    <a class="chip {{ 'active' if w.week == week }}" href="{{ url_for('audit_archive', week=w.week) }}"
        title="{{ w.first_ts[:10] }} to {{ w.last_ts[:10] }}">{{ w.week }} ({{ w.count }})</a>
     {% endfor %}
   </div>
@@ -44,8 +41,7 @@ current week; older events roll into the weekly <strong>archive</strong> below.<
     </table>
   </div>
   {% else %}
-  <p class="text-muted" style="font-size:12px">Nothing recorded yet. Events appear here as
-  people sign in, accounts change, and data is imported or deleted.</p>
+  <p class="text-muted" style="font-size:12px">No events archived for this week.</p>
   {% endif %}
 </div>
 {% endblock %}

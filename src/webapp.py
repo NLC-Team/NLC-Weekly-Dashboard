@@ -10,6 +10,7 @@ import base64
 import io
 import logging
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -1288,8 +1289,31 @@ def staff_reject():
 @admin_required
 def audit():
     """Security audit trail: logins, failures, account/credential changes,
-    imports, deletions, settings edits. Append-only; newest first."""
-    return render_template("audit.html", events=get_store().recent_events(300))
+    imports, deletions, settings edits. Newest first.
+
+    The live log holds only the CURRENT week; opening this page rolls any
+    older events into the weekly archive below (admin-only). Rotation is lazy
+    (on view) — there's no separate scheduler to drift or miss."""
+    store = get_store()
+    moved = store.rotate_audit(date.today())
+    if moved:
+        _audit("audit_archived", f"{moved} event(s) rolled into the weekly archive")
+    return render_template("audit.html",
+                           events=store.recent_events(3000),
+                           weeks=store.archived_weeks(),
+                           this_week=store._week_label(date.today()))
+
+
+@app.route("/audit/archive/<week>")
+@admin_required
+def audit_archive(week):
+    """View one archived week's events. Admin-only (inherits @admin_required)."""
+    if not re.fullmatch(r"\d{4}-W\d{2}", week or ""):
+        abort(404)
+    store = get_store()
+    return render_template("audit_archive.html", week=week,
+                           events=store.archived_events(week),
+                           weeks=store.archived_weeks())
 
 
 @app.route("/settings")
