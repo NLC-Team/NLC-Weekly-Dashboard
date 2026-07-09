@@ -1042,6 +1042,10 @@ def project_doc():
         request.form.get("received") == "1",
         date.today(),
     )
+    # The page ticks documents via fetch and then refreshes the detail panel
+    # itself, so an AJAX call just needs a cheap OK — no full re-render/redirect.
+    if request.headers.get("X-Requested-With") == "fetch":
+        return "", 204
     return redirect(request.referrer or url_for("projects"))
 
 

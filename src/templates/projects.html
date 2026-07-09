@@ -250,7 +250,7 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="item_key" value="{{ doc.item_key }}">
         <input type="hidden" name="received" value="{{ '0' if doc.received else '1' }}">
-        <input type="checkbox" {{ 'checked' if doc.received }} data-autosubmit>
+        <input type="checkbox" {{ 'checked' if doc.received }} class="doc-received">
         <label data-toggle-prev>
           <span style="font-weight:600">{{ doc.title }}</span>
           <span class="text-muted"> — {{ doc.status }} ({{ doc.age_days }}d)</span>
@@ -288,6 +288,35 @@ function filterReturns(q) {
   countEl.textContent = term ? visible + ' result' + (visible === 1 ? '' : 's') : '';
 }
 
+// ---- Shared "load a return's detail without a full page reload" helpers ----
+// Fetch a projects URL and return its parsed document.
+async function fetchProjectsPage(href) {
+  const resp = await fetch(href, { headers: { 'X-Requested-With': 'fetch' } });
+  return new DOMParser().parseFromString(await resp.text(), 'text/html');
+}
+// Swap in the fresh right-hand detail panel. Returns false if it couldn't.
+function swapDetailPanel(doc) {
+  const fresh = doc.getElementById('detailPanel');
+  const current = document.getElementById('detailPanel');
+  if (fresh && current) { current.innerHTML = fresh.innerHTML; return true; }
+  return false;
+}
+// Sync ONE left-list row (the one matching href) to the freshly-fetched page,
+// so its "Docs in" count, status badge and overdue highlight track a change
+// made in the detail panel. Only that row changes; the list doesn't scroll.
+function syncRow(doc, href) {
+  const pick = function (root) {
+    return Array.prototype.find.call(
+      root.querySelectorAll('#returnsBody tr.project-row'),
+      function (r) { return r.dataset.href === href; });
+  };
+  const freshRow = pick(doc), curRow = pick(document);
+  if (freshRow && curRow) {
+    curRow.className = freshRow.className;   // overdue / done / selected
+    curRow.innerHTML = freshRow.innerHTML;   // docs-in count, status badge, etc.
+  }
+}
+
 // Selecting a client loads its detail WITHOUT reloading the page, so the
 // list never scrolls and you stay exactly where you are.
 (function () {
@@ -302,13 +331,8 @@ function filterReturns(q) {
         .forEach(function (r) { r.classList.remove('selected'); });
     row.classList.add('selected');
     try {
-      const resp = await fetch(href, { headers: { 'X-Requested-With': 'fetch' } });
-      const html = await resp.text();
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const fresh = doc.getElementById('detailPanel');
-      const current = document.getElementById('detailPanel');
-      if (fresh && current) {
-        current.innerHTML = fresh.innerHTML;          // swap detail only
+      const doc = await fetchProjectsPage(href);
+      if (swapDetailPanel(doc)) {
         history.replaceState(null, '', href);          // keep URL in sync
       } else {
         window.location.href = href;                   // fallback
@@ -325,6 +349,37 @@ function filterReturns(q) {
     if (e.target.closest('a')) return;
     const row = e.target.closest('tr.project-row');
     if (row) selectRow(row);
+  });
+})();
+
+// Ticking a document "received" posts in the background and refreshes just the
+// detail panel + that return's list row — no full page reload, so the checklist
+// stays put and feels instant. Delegated on #detailPanel (which persists across
+// detail swaps) so it also covers documents loaded via selectRow above.
+(function () {
+  const panel = document.getElementById('detailPanel');
+  if (!panel) return;
+  panel.addEventListener('change', async function (e) {
+    const cb = e.target.closest && e.target.closest('.doc-received');
+    if (!cb) return;
+    const form = cb.closest('form');
+    if (!form) return;
+    const selRow = document.querySelector('#returnsBody tr.project-row.selected');
+    const href = selRow ? selRow.dataset.href : window.location.href;
+    const fd = new FormData();
+    fd.append('csrf_token', form.querySelector('[name=csrf_token]').value);
+    fd.append('item_key', form.querySelector('[name=item_key]').value);
+    fd.append('received', cb.checked ? '1' : '0');   // the toggled-to state
+    try {
+      const r = await fetch(form.action,
+        { method: 'POST', body: fd, headers: { 'X-Requested-With': 'fetch' } });
+      if (!r.ok) throw new Error('save failed');
+      const doc = await fetchProjectsPage(href);      // fresh, consistent state
+      swapDetailPanel(doc);
+      syncRow(doc, href);
+    } catch (err) {
+      form.submit();   // fallback: full submit still applies the change
+    }
   });
 })();
 
