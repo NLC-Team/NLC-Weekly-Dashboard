@@ -204,6 +204,12 @@ def _hash_password(pw: str) -> str:
     return generate_password_hash(pw, method="pbkdf2:sha256")
 
 
+# A throwaway hash to verify against when no account matches the email. Checking
+# it burns the same ~pbkdf2 time a real check would, so a wrong email and a wrong
+# password take equally long — a timing attacker can't tell which emails exist.
+_DUMMY_PW_HASH = _hash_password(secrets.token_hex(16))
+
+
 def _mail_config() -> dict:
     cfg = mailer.merged_config(get_store().get_setting("mail_config", {}))
     # The stored password is encrypted at rest (see vault.py); hand callers the
@@ -283,6 +289,26 @@ def _inject_user():
     }
 
 
+# Content-Security-Policy. The templates use inline <style>/<script> blocks AND
+# inline event handlers (onclick/onchange/...), which can't carry a nonce, so
+# script/style must allow 'unsafe-inline'. Charts are embedded as data: PNGs and
+# the favicon is a data: SVG, so img-src needs data:. Everything else is locked
+# to same-origin: no external scripts, no plugins, no <base> hijack, forms can
+# only post back here, and the app can't be framed (clickjacking defence — this
+# is the CSP equivalent of X-Frame-Options: DENY, which we also send for older
+# browsers). Tightening script/style to nonces is a worthwhile follow-up.
+_CSP = ("default-src 'self'; "
+        "img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "connect-src 'self'; "
+        "font-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'")
+
+
 @app.after_request
 def _no_store_dynamic(resp):
     """Never let the browser cache dynamic pages/data. This is a live, multi-user
@@ -295,6 +321,26 @@ def _no_store_dynamic(resp):
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
+
+    # Baseline security headers on every response (pages AND static assets):
+    #   - CSP: see _CSP above — the main XSS/clickjacking/injection defence.
+    #   - nosniff: stop the browser guessing a non-declared content type.
+    #   - frame DENY: no embedding the app in an <iframe> (clickjacking).
+    #   - Referrer-Policy: don't leak the current URL to any other origin.
+    #   - Permissions-Policy: this app needs none of these device APIs; deny all.
+    resp.headers.setdefault("Content-Security-Policy", _CSP)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    resp.headers.setdefault("Permissions-Policy",
+                            "geolocation=(), microphone=(), camera=(), "
+                            "payment=(), usb=(), interest-cohort=()")
+    # HSTS only when we're actually served over HTTPS end-to-end (behind the
+    # Cloudflare tunnel). Sending it on plain-HTTP LAN use would wrongly pin
+    # browsers to HTTPS for an origin that has no certificate.
+    if cloudflare_hardening.enabled():
+        resp.headers.setdefault("Strict-Transport-Security",
+                                "max-age=31536000; includeSubDomains")
     return resp
 
 
@@ -663,8 +709,13 @@ def login():
             error = "Too many failed attempts. Please wait a few minutes and try again."
         else:
             acct = get_store().get_account_by_email(email)
-            pw_ok = bool(acct and acct["password_hash"]
-                         and check_password_hash(acct["password_hash"], password))
+            # Always run a hash check — against the real hash if the account
+            # exists, else a dummy — so response time doesn't reveal whether the
+            # email is registered (user-enumeration side-channel).
+            hash_to_check = (acct["password_hash"] if acct and acct["password_hash"]
+                             else _DUMMY_PW_HASH)
+            pw_matches = check_password_hash(hash_to_check, password)
+            pw_ok = bool(acct and acct["password_hash"] and pw_matches)
             if not pw_ok:
                 _throttle_hit("login-email", email)
                 _throttle_hit("login-ip", ip)
@@ -684,8 +735,10 @@ def login():
     return render_template("login.html", email=email, next=nxt, error=error)
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["POST"])
 def logout():
+    # POST-only + CSRF-protected (via the global gate) so a hostile page can't
+    # force-log-out a signed-in user with a stray <img>/link (CSRF).
     if session.get("auth_user"):
         _audit("logout", actor=session.get("auth_user", ""))
     session.clear()
@@ -1405,7 +1458,7 @@ def import_run():
     return redirect(url_for("import_view"))
 
 
-@app.route("/import/cancel")
+@app.route("/import/cancel", methods=["POST"])
 @admin_required
 def import_cancel():
     ctx = session.pop("import_ctx", {})

@@ -75,7 +75,11 @@
 
     <div class="row">
       <button type="submit" class="btn btn-primary">Run import</button>
-      <a href="{{ url_for('import_cancel') }}" class="btn btn-secondary">Cancel</a>
+      <!-- Reuses this form's CSRF token but posts to the cancel endpoint, so
+           cancelling is a CSRF-protected POST without nesting a second form. -->
+      <button type="submit" class="btn btn-secondary"
+              formmethod="post" formaction="{{ url_for('import_cancel') }}"
+              formnovalidate>Cancel</button>
     </div>
   </form>
 </div>
