@@ -72,7 +72,7 @@
           </td>
           <td>
             <form method="post" action="{{ url_for('staff_reject') }}"
-                  onsubmit="return confirm('Reject and delete the request from {{ p.name }}?')">
+                  data-confirm="Reject and delete the request from {{ p.name }}?">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <input type="hidden" name="name" value="{{ p.name }}">
               <button type="submit" class="btn btn-danger btn-sm">Reject</button>
@@ -144,7 +144,7 @@
             <form method="post" action="{{ url_for('staff_role') }}" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <input type="hidden" name="name" value="{{ m.name }}">
-              <select name="role" onchange="this.form.submit()" style="font-size:11px;padding:4px 8px">
+              <select name="role" data-autosubmit style="font-size:11px;padding:4px 8px">
                 {% for r in ['Viewer','Manager','Admin'] %}
                 <option {{ 'selected' if m.role == r }}>{{ r }}</option>
                 {% endfor %}
@@ -172,7 +172,7 @@
           </td>
           <td>
             <form method="post" action="{{ url_for('staff_remove') }}"
-                  onsubmit="return confirm('Remove {{ m.name }}?')">
+                  data-confirm="Remove {{ m.name }}?">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <input type="hidden" name="name" value="{{ m.name }}">
               <button type="submit" class="btn btn-danger btn-sm">Remove</button>

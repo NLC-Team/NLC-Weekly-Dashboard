@@ -37,7 +37,7 @@
           style="display:flex;gap:6px;align-items:center;margin-right:4px">
       <input type="hidden" name="filter" value="{{ filter_type }}">
       <label style="margin-bottom:0;text-transform:none;font-size:12px;font-weight:700">Staff:</label>
-      <select name="staff" onchange="this.form.submit()" style="font-size:12px;padding:5px 8px">
+      <select name="staff" data-autosubmit style="font-size:12px;padding:5px 8px">
         <option value="">All staff</option>
         {% for n in all_staff_names %}
         <option value="{{ n }}" {{ 'selected' if staff_mode and n == staff }}>{{ n }}</option>
@@ -62,14 +62,14 @@
           style="display:flex;gap:6px;align-items:center;margin-left:4px">
       <input type="hidden" name="filter" value="{{ filter_type }}">
       <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
-      <select name="month" onchange="this.form.submit()" style="font-size:12px;padding:5px 8px">
+      <select name="month" data-autosubmit style="font-size:12px;padding:5px 8px">
         <option value="">Any month</option>
         {% for m in range(1, 13) %}
         <option value="{{ m }}" {{ 'selected' if sel_month == m|string }}>
           {{ ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1] }}</option>
         {% endfor %}
       </select>
-      <select name="year" onchange="this.form.submit()" style="font-size:12px;padding:5px 8px">
+      <select name="year" data-autosubmit style="font-size:12px;padding:5px 8px">
         <option value="">Any year</option>
         {% for y in years %}
         <option value="{{ y }}" {{ 'selected' if sel_year == y|string }}>{{ y }}</option>
@@ -92,7 +92,6 @@
       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
     </svg>
     <input type="text" id="returnSearch" placeholder="Search clients…"
-           oninput="filterReturns(this.value)"
            style="min-width:190px;font-size:12px;padding:7px 11px">
     <span id="returnSearchCount" style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap"></span>
   </div>
@@ -157,7 +156,7 @@
                  stopPropagation so the link navigates instead of selecting the row. #}
               {%- for a in p.assignees[:2] -%}
                 {%- if a == 'Unassigned' -%}<span class="text-muted">{{ a }}</span>
-                {%- else -%}<a href="{{ url_for('overdue', person=a) }}" onclick="event.stopPropagation()" style="color:var(--accent);font-weight:600">{{ a }}</a>
+                {%- else -%}<a href="{{ url_for('overdue', person=a) }}" style="color:var(--accent);font-weight:600">{{ a }}</a>
                 {%- endif -%}
                 {%- if not loop.last %}, {% endif -%}
               {%- endfor -%}
@@ -232,7 +231,7 @@
       </button>
 
       <form method="post" action="{{ url_for('project_delete') }}"
-            onsubmit="return confirm('Delete {{ selected.client }} permanently? This removes the client and all their documents and cannot be undone.');"
+            data-confirm="Delete {{ selected.client }} permanently? This removes the client and all their documents and cannot be undone."
             style="margin-left:auto">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="pkey" value="{{ selected.project_key }}">
@@ -251,8 +250,8 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="item_key" value="{{ doc.item_key }}">
         <input type="hidden" name="received" value="{{ '0' if doc.received else '1' }}">
-        <input type="checkbox" {{ 'checked' if doc.received }} onchange="this.closest('form').submit()">
-        <label onclick="this.previousElementSibling.click()">
+        <input type="checkbox" {{ 'checked' if doc.received }} data-autosubmit>
+        <label data-toggle-prev>
           <span style="font-weight:600">{{ doc.title }}</span>
           <span class="text-muted"> — {{ doc.status }} ({{ doc.age_days }}d)</span>
         </label>
@@ -271,9 +270,10 @@
 </div>
 {% endif %}
 
-<script>
+<script nonce="{{ csp_nonce }}">
 const splitLeft = document.querySelector('.split-left');
 const searchBox = document.getElementById('returnSearch');
+if (searchBox) searchBox.addEventListener('input', function () { filterReturns(this.value); });
 
 function filterReturns(q) {
   const term = q.trim().toLowerCase();
@@ -319,6 +319,10 @@ function filterReturns(q) {
   }
 
   body.addEventListener('click', function (e) {
+    // Let real links inside a row (e.g. an assignee name linking to Overdue)
+    // navigate normally instead of triggering the row's ajax select. This
+    // replaces the stopPropagation the assignee links used to carry inline.
+    if (e.target.closest('a')) return;
     const row = e.target.closest('tr.project-row');
     if (row) selectRow(row);
   });

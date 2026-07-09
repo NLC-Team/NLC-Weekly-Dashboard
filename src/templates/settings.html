@@ -30,8 +30,8 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
     <div class="row mb-1" style="gap:8px">
-      <button type="button" class="btn btn-secondary btn-sm" onclick="setAllStatuses(true)">Select all</button>
-      <button type="button" class="btn btn-secondary btn-sm" onclick="setAllStatuses(false)">Clear all</button>
+      <button type="button" class="btn btn-secondary btn-sm" data-set-all="true">Select all</button>
+      <button type="button" class="btn btn-secondary btn-sm" data-set-all="false">Clear all</button>
     </div>
 
     <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
@@ -49,7 +49,7 @@
         <!-- Category group: master checkbox + collapsible sub-statuses -->
         <div class="status-group" style="border:1px solid var(--border);border-radius:8px;padding:9px 11px">
           <div style="display:flex;align-items:center;gap:9px">
-            <input type="checkbox" class="group-master" onchange="toggleGroup(this)"
+            <input type="checkbox" class="group-master"
                    style="width:16px;height:16px;accent-color:var(--accent)">
             <details style="flex:1">
               <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:var(--text)">
@@ -76,7 +76,7 @@
     <button type="submit" class="btn btn-primary btn-sm">Save statuses</button>
   </form>
 
-  <script>
+  <script nonce="{{ csp_nonce }}">
   function syncMasters() {
     document.querySelectorAll('.status-group').forEach(function (grp) {
       var master = grp.querySelector('.group-master');
@@ -100,6 +100,13 @@
   }
   document.querySelectorAll('.status-cb').forEach(function (c) {
     c.addEventListener('change', syncMasters);
+  });
+  // Wire the (formerly inline) group-master and select/clear-all controls.
+  document.querySelectorAll('.group-master').forEach(function (m) {
+    m.addEventListener('change', function () { toggleGroup(m); });
+  });
+  document.querySelectorAll('[data-set-all]').forEach(function (b) {
+    b.addEventListener('click', function () { setAllStatuses(b.dataset.setAll === 'true'); });
   });
   syncMasters();
   </script>

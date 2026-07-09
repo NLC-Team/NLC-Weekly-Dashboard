@@ -237,7 +237,7 @@ label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase
   {% endif %}
   {% block content %}{% endblock %}
 </main>
-<script>
+<script nonce="{{ csp_nonce }}">
   // Register the service worker so the dashboard is installable as its own app.
   // Only works in a secure context (HTTPS, or localhost on the host machine);
   // over plain HTTP to a remote server it silently no-ops until HTTPS is added.
@@ -246,6 +246,30 @@ label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase
       navigator.serviceWorker.register('/sw.js').catch(function () { /* non-fatal */ });
     });
   }
+
+  // ---- Global CSP-safe behaviours (replace former inline on* handlers) ----
+  // Delegated on document so they also cover markup swapped in later (e.g. the
+  // Returns detail panel, whose innerHTML is replaced when you pick a client).
+
+  // A control with data-autosubmit submits its form when it changes — used by
+  // the staff/period dropdowns and the per-document "received" checkboxes.
+  document.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t && t.matches && t.matches('[data-autosubmit]') && t.form) t.form.submit();
+  });
+
+  // A <form data-confirm="…"> asks for confirmation before it submits.
+  document.addEventListener('submit', function (e) {
+    var msg = e.target.getAttribute && e.target.getAttribute('data-confirm');
+    if (msg && !window.confirm(msg)) e.preventDefault();
+  });
+
+  // An element with data-toggle-prev clicks its previous sibling when clicked
+  // (the document rows' text label toggles the checkbox beside it).
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest && e.target.closest('[data-toggle-prev]');
+    if (el && el.previousElementSibling) el.previousElementSibling.click();
+  });
 </script>
 </body>
 </html>

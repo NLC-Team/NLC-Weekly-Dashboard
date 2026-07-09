@@ -7,7 +7,7 @@
 <div class="row mb-2" style="gap:12px;align-items:center;flex-wrap:wrap">
   <form method="get" action="{{ url_for('person') }}" style="display:flex;gap:8px;align-items:center">
     <label style="margin-bottom:0;text-transform:none;font-size:13px;font-weight:600;white-space:nowrap">Staff member:</label>
-    <select name="name" onchange="this.form.submit()" style="min-width:220px">
+    <select name="name" data-autosubmit style="min-width:220px">
       <option value="__all__" {{ 'selected' if show_all }}>All staff</option>
       {% for n in names %}
       <option value="{{ n }}" {{ 'selected' if n == selected }}>{{ n }}</option>
@@ -22,7 +22,6 @@
       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
     </svg>
     <input type="text" id="clientSearch" placeholder="Search client or owner…"
-           oninput="filterClients(this.value)"
            style="min-width:180px;font-size:12px;padding:7px 11px">
     <span id="searchCount" style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap"></span>
   </div>
@@ -82,7 +81,7 @@
 <p class="text-muted">No data yet — import a CSV to get started.</p>
 {% endif %}
 
-<script>
+<script nonce="{{ csp_nonce }}">
 function filterClients(q) {
   const term = q.trim().toLowerCase();
   const rows = document.querySelectorAll('#clientTable tbody tr[data-client]');
@@ -103,5 +102,7 @@ function filterClients(q) {
     noRes.style.display = 'none';
   }
 }
+var _clientSearch = document.getElementById('clientSearch');
+if (_clientSearch) _clientSearch.addEventListener('input', function () { filterClients(this.value); });
 </script>
 {% endblock %}

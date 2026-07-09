@@ -57,7 +57,7 @@ input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(29
     </div>
     {% block auth %}{% endblock %}
   </div>
-<script>
+<script nonce="{{ csp_nonce }}">
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
     window.addEventListener('load', function () {
       navigator.serviceWorker.register('/sw.js').catch(function () { /* non-fatal */ });

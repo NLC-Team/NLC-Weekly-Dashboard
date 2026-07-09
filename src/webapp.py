@@ -143,6 +143,16 @@ def _csrf_token() -> str:
     return tok
 
 
+def _csp_nonce() -> str:
+    """A fresh per-request nonce for the Content-Security-Policy. Generated once
+    per request and cached on flask.g so the value in the CSP header matches the
+    `nonce=` on every inline <script>. Must be per-request (never per-session), or
+    it stops being a meaningful guard against injected inline script."""
+    if not hasattr(g, "_csp_nonce"):
+        g._csp_nonce = secrets.token_urlsafe(16)
+    return g._csp_nonce
+
+
 # ---- Abuse throttle (in-memory, bounded) -----------------------------------
 # Keys are (kind, identifier) — e.g. ("login-email", <email>) or
 # ("login-ip", <ip>) — so a password spray is stopped per-account AND per-IP.
@@ -283,30 +293,38 @@ def _inject_user():
         "current_role": acct["role"] if acct else "",
         "all_staff": get_store().get_staff(),
         "csrf_token": _csrf_token(),
+        "csp_nonce": _csp_nonce(),
         # Admins are alerted to new sign-up requests in-app (a badge on the Staff
         # menu + a banner), since outbound email can't be relied on here.
         "pending_count": _pending_count() if is_admin else 0,
     }
 
 
-# Content-Security-Policy. The templates use inline <style>/<script> blocks AND
-# inline event handlers (onclick/onchange/...), which can't carry a nonce, so
-# script/style must allow 'unsafe-inline'. Charts are embedded as data: PNGs and
-# the favicon is a data: SVG, so img-src needs data:. Everything else is locked
-# to same-origin: no external scripts, no plugins, no <base> hijack, forms can
-# only post back here, and the app can't be framed (clickjacking defence — this
-# is the CSP equivalent of X-Frame-Options: DENY, which we also send for older
-# browsers). Tightening script/style to nonces is a worthwhile follow-up.
-_CSP = ("default-src 'self'; "
-        "img-src 'self' data:; "
-        "style-src 'self' 'unsafe-inline'; "
-        "script-src 'self' 'unsafe-inline'; "
-        "connect-src 'self'; "
-        "font-src 'self'; "
-        "object-src 'none'; "
-        "base-uri 'self'; "
-        "form-action 'self'; "
-        "frame-ancestors 'none'")
+# Content-Security-Policy, built per request so script-src can pin a fresh nonce.
+#   - script-src 'self' + per-request nonce, NO 'unsafe-inline': every inline
+#     <script> carries nonce="{{ csp_nonce }}", and there are no inline event
+#     handlers (onclick/onchange/...) left — they were moved to addEventListener —
+#     so injected inline script without the nonce simply won't run. This is the
+#     real XSS backstop behind Jinja's autoescaping.
+#   - style-src keeps 'unsafe-inline': the templates use inline style="" attributes
+#     throughout, and CSP nonces do not apply to style attributes, so removing it
+#     would mean a large presentational rewrite for little security gain (style
+#     injection is far less dangerous than script injection).
+#   - img-src 'self' data:: charts are base64 PNGs and the favicon is a data: SVG.
+#   - Everything else same-origin: no plugins, no <base> hijack, forms post only
+#     here, and the app can't be framed (clickjacking; X-Frame-Options backs this
+#     up for older browsers).
+def _build_csp(nonce: str) -> str:
+    return ("default-src 'self'; "
+            "img-src 'self' data:; "
+            "style-src 'self' 'unsafe-inline'; "
+            f"script-src 'self' 'nonce-{nonce}'; "
+            "connect-src 'self'; "
+            "font-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'; "
+            "frame-ancestors 'none'")
 
 
 @app.after_request
@@ -328,7 +346,7 @@ def _no_store_dynamic(resp):
     #   - frame DENY: no embedding the app in an <iframe> (clickjacking).
     #   - Referrer-Policy: don't leak the current URL to any other origin.
     #   - Permissions-Policy: this app needs none of these device APIs; deny all.
-    resp.headers.setdefault("Content-Security-Policy", _CSP)
+    resp.headers.setdefault("Content-Security-Policy", _build_csp(_csp_nonce()))
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "same-origin")

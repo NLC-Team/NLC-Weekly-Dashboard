@@ -18,12 +18,11 @@
 </div>
 {% else %}
 
-<form method="post" action="{{ url_for('clients_delete') }}"
-      onsubmit="return confirmDelete();">
+<form method="post" action="{{ url_for('clients_delete') }}" id="deleteForm">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <div class="row mb-2" style="gap:12px;align-items:center;flex-wrap:wrap">
     <button type="submit" class="btn btn-danger" id="deleteBtn" disabled>Delete selected (0)</button>
-    <button type="button" class="btn btn-secondary" id="selectAllBtn" onclick="toggleSelectAll()">Select all</button>
+    <button type="button" class="btn btn-secondary" id="selectAllBtn">Select all</button>
     <span class="text-muted" style="font-size:12px">Tick the clients you want to remove, or use <strong>Select all</strong>. This cannot be undone.</span>
     <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
@@ -31,7 +30,6 @@
         <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
       </svg>
       <input type="text" id="clientSearch" placeholder="Search clients…"
-             oninput="filterClients(this.value)"
              style="min-width:190px;font-size:12px;padding:7px 11px">
     </div>
   </div>
@@ -40,7 +38,7 @@
     <table id="clientsTable">
       <thead>
         <tr>
-          <th style="width:42px"><input type="checkbox" id="selectAll" onchange="toggleAll(this)"
+          <th style="width:42px"><input type="checkbox" id="selectAll"
                 style="width:16px;height:16px;cursor:pointer;accent-color:var(--danger)"></th>
           <th>Client</th>
           <th>Type</th>
@@ -53,7 +51,7 @@
         {% for p in projects %}
         <tr data-client="{{ p.client | lower }}">
           <td><input type="checkbox" name="pkey" value="{{ p.project_key }}" class="rowChk"
-                onchange="updateCount()" style="width:16px;height:16px;cursor:pointer;accent-color:var(--danger)"></td>
+                style="width:16px;height:16px;cursor:pointer;accent-color:var(--danger)"></td>
           <td style="font-weight:600">{{ p.client }}</td>
           <td>{{ p.return_type }}</td>
           <td>{{ p.received_docs }}/{{ p.total_docs }}</td>
@@ -72,7 +70,7 @@
   </div>
 </form>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 // Checkboxes on rows currently visible (respects the search filter).
 function visibleBoxes() {
   return Array.from(document.querySelectorAll('.rowChk')).filter(function (c) {
@@ -134,6 +132,18 @@ function confirmDelete() {
   return confirm('Permanently delete ' + n + ' client' + (n === 1 ? '' : 's') +
                  ' and all their documents? This cannot be undone.');
 }
+
+// Wire up the (formerly inline) handlers.
+document.getElementById('selectAllBtn').addEventListener('click', toggleSelectAll);
+document.getElementById('selectAll').addEventListener('change', function () { toggleAll(this); });
+document.getElementById('clientSearch').addEventListener('input', function () { filterClients(this.value); });
+document.getElementById('clientsBody').addEventListener('change', function (e) {
+  if (e.target.classList.contains('rowChk')) updateCount();
+});
+document.getElementById('deleteForm').addEventListener('submit', function (e) {
+  if (!confirmDelete()) e.preventDefault();
+});
+
 updateCount();  // set the initial button labels on page load
 </script>
 {% endif %}
