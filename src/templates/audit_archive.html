@@ -26,7 +26,10 @@ not deleted. <a href="{{ url_for('audit') }}" style="color:var(--accent);font-we
       <tbody>
         {% for e in events %}
         <tr>
-          <td class="monospace" style="white-space:nowrap">{{ e.ts }}</td>
+          <td style="white-space:nowrap;line-height:1.5">
+            <div style="font-weight:600">{{ e.ts | audit_date }}</div>
+            <div class="text-muted" style="font-size:11px">{{ e.ts | audit_time }}</div>
+          </td>
           <td style="font-weight:600">{{ e.actor or '—' }}</td>
           <td class="monospace">{{ e.ip or '—' }}</td>
           <td>

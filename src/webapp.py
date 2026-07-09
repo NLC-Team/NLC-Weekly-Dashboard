@@ -282,6 +282,38 @@ def _safe_next(target: str) -> str:
     return url_for("overview")
 
 
+# ---- Template filters -----------------------------------------------------
+# Audit timestamps are stored ISO (e.g. "2026-07-09T14:24:07"). Show them to
+# people as a date over a 12-hour (AM/PM) clock. Built by hand, not strftime:
+# the non-padded codes ("%-I"/"%-d") aren't portable and fail on Windows.
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _parse_ts(ts):
+    try:
+        return datetime.fromisoformat(ts)
+    except (ValueError, TypeError):
+        return None
+
+
+@app.template_filter("audit_date")
+def _audit_date(ts):
+    dt = _parse_ts(ts)
+    return f"{_MONTHS[dt.month - 1]} {dt.day}, {dt.year}" if dt else (ts or "—")
+
+
+@app.template_filter("audit_time")
+def _audit_time(ts):
+    """12-hour clock with AM/PM, e.g. '2:24:07 PM'."""
+    dt = _parse_ts(ts)
+    if not dt:
+        return ""
+    hour12 = dt.hour % 12 or 12
+    meridiem = "AM" if dt.hour < 12 else "PM"
+    return f"{hour12}:{dt.minute:02d}:{dt.second:02d} {meridiem}"
+
+
 @app.context_processor
 def _inject_user():
     """Make the current user/role, staff list and CSRF token available to
