@@ -8,6 +8,7 @@ appearing is marked resolved (i.e. it was sent/completed).
 from __future__ import annotations
 
 import json
+import secrets
 import sqlite3
 import threading
 from datetime import date, timedelta
@@ -487,13 +488,20 @@ class Store:
                        email_verified: int = 0, verify_code: str | None = None,
                        verify_sent_at: str | None = None, today: date | None = None) -> None:
         """Create a login account. Raises sqlite3.IntegrityError if the display
-        name (primary key), username or email is already in use."""
+        name (primary key), username or email is already in use.
+
+        The account starts with a RANDOM session_rev, not 0. Sessions authenticate
+        on (name, session_rev); if a deleted staff member is later re-created with
+        the same name, a fresh random rev guarantees their old pre-deletion cookie
+        can't match the new account and silently log them back in — they must sign
+        in again. (A deleted row's rev is gone, so we can't just increment it.)"""
         self.conn.execute(
             "INSERT INTO staff(name, role, added_at, username, email, password_hash, "
-            "status, email_verified, verify_code, verify_sent_at) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "status, email_verified, verify_code, verify_sent_at, session_rev) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (name, role, today.isoformat() if today else None, username, email,
-             password_hash, status, 1 if email_verified else 0, verify_code, verify_sent_at),
+             password_hash, status, 1 if email_verified else 0, verify_code, verify_sent_at,
+             secrets.randbelow(2_000_000_000)),
         )
         self.conn.commit()
 
