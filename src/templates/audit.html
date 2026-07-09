@@ -5,19 +5,24 @@
 imports, deletions, and settings edits. Newest first. The live log keeps only the
 current week; older events roll into the weekly <strong>archive</strong> below.</p>
 
-{% if weeks %}
 <div class="card mb-2">
   <div class="card-title">Archived weeks</div>
+  {% if weeks %}
   <p class="text-muted" style="font-size:12px;margin-bottom:10px">
-    Past weeks are preserved here (admin-only) and never deleted.</p>
+    Past weeks are preserved here (admin-only) and never deleted. Click a week to view it.</p>
   <div class="chips">
     {% for w in weeks %}
     <a class="chip" href="{{ url_for('audit_archive', week=w.week) }}"
        title="{{ w.first_ts[:10] }} to {{ w.last_ts[:10] }}">{{ w.week }} ({{ w.count }})</a>
     {% endfor %}
   </div>
+  {% else %}
+  <p class="text-muted" style="font-size:12px">
+    No archived weeks yet. This week's events (<strong>{{ this_week }}</strong>) stay in the live
+    log below; when a new week begins they roll into an archive here automatically —
+    nothing is ever deleted.</p>
+  {% endif %}
 </div>
-{% endif %}
 
 <div class="card">
   {% if events %}
