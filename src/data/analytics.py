@@ -191,7 +191,12 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
                 "outstanding_titles": [d["title"] for d in doc_rows if not d["received"]],
                 "pct_complete": round(100 * received_count / len(doc_rows)) if doc_rows else 0,
                 "days_open": days_open,
-                "overdue": any(d["overdue"] for d in doc_rows),
+                # A client reads as Overdue only while NOTHING has come in yet.
+                # The moment any document is marked off (received), the client is
+                # being worked, so it shows Open — not Overdue. Mirrors the
+                # "mark a document -> client Open" rule (received also reopens a
+                # closed client, see store.set_received).
+                "overdue": received_count == 0 and any(d["overdue"] for d in doc_rows),
             }
         )
 

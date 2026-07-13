@@ -363,6 +363,18 @@ class Store:
         rows = self.conn.execute("SELECT item_key, received FROM doc_state").fetchall()
         return {r["item_key"]: bool(r["received"]) for r in rows}
 
+    def project_key_for_item(self, item_key: str) -> str | None:
+        """The effective project_key an item belongs to, mirroring how
+        analytics.build_projects groups items: the item's own project_key, else a
+        synthetic 'c:'+client key. Used to reopen a client when a document of
+        theirs is marked received."""
+        row = self.conn.execute(
+            "SELECT project_key, client FROM items WHERE item_key=?", (item_key,)
+        ).fetchone()
+        if not row:
+            return None
+        return row["project_key"] or ("c:" + (row["client"] or "").strip().lower())
+
     def set_received(self, item_key: str, received: bool, today: date) -> None:
         self.conn.execute(
             "INSERT INTO doc_state(item_key, received, received_at) VALUES(?, ?, ?) "
@@ -370,6 +382,20 @@ class Store:
             "received_at=excluded.received_at",
             (item_key, 1 if received else 0, today.isoformat() if received else None),
         )
+        # Marking a document received reclassifies its client as OPEN: activity on
+        # a client means it's being worked, so a client that was "closed"
+        # (completed) is automatically reopened. Unticking never auto-closes.
+        if received:
+            pkey = self.project_key_for_item(item_key)
+            if pkey:
+                cur = self.conn.execute(
+                    "SELECT completed FROM project_state WHERE project_key=?", (pkey,)
+                ).fetchone()
+                if cur and cur["completed"]:
+                    self.conn.execute(
+                        "UPDATE project_state SET completed=0, completed_at=NULL "
+                        "WHERE project_key=?", (pkey,)
+                    )
         self.conn.commit()
         self._bump()
 

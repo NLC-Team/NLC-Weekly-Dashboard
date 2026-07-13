@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Returns &amp; bookkeeping</h1>
-<p class="subtitle">Open returns and the client documents they're waiting on. Tick documents as they arrive; mark a return complete when it's done.</p>
+<p class="subtitle">Open returns and the client documents they're waiting on. Tick documents as they arrive. Use the Open / Close button to set a client's status yourself — and marking any document automatically flags that client Open.</p>
 
 {% if staff_mode %}
 <div style="margin-bottom:14px">
@@ -19,7 +19,7 @@
   </div>
   <div class="kpi-card">
     <div class="kpi-value" style="color:var(--text)">{{ totals.completed_total }}</div>
-    <div class="kpi-label">Completed</div>
+    <div class="kpi-label">Closed</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-value" style="color:var(--warn)">{{ totals.docs_outstanding }}</div>
@@ -80,7 +80,7 @@
     <a class="chip {{ 'active' if show_done }}"
        href="{{ url_for('projects', filter='All', done=('0' if show_done else '1')) }}"
        style="margin-left:8px">
-      {% if show_done %}&#10003; Showing completed ({{ display|length }}) — click to exit{% else %}Show completed{% endif %}
+      {% if show_done %}&#10003; Showing closed ({{ display|length }}) — click to exit{% else %}Show closed{% endif %}
     </a>
     {% endif %}
   </div>
@@ -166,7 +166,7 @@
             <td>{{ p.received_docs }}/{{ p.total_docs }}</td>
             <td>{{ p.days_open }}</td>
             <td>
-              {% if p.completed %}<span class="badge badge-done">Done</span>
+              {% if p.completed %}<span class="badge badge-done">Closed</span>
               {% elif p.overdue %}<span class="badge badge-overdue">Overdue</span>
               {% else %}<span class="badge badge-open">Open</span>{% endif %}
             </td>
@@ -218,7 +218,7 @@
         <input type="hidden" name="filter" value="{{ filter_type }}">
         <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
         <button type="submit" class="btn {{ 'btn-secondary' if selected.completed else 'btn-primary' }}">
-          {{ 'Reopen' if selected.completed else 'Mark complete' }}
+          {{ 'Open client' if selected.completed else 'Close client' }}
         </button>
       </form>
 
