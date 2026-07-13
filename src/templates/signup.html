@@ -25,7 +25,7 @@ approves your account before you can sign in.</p>
   <p class="hint">Must be a @nlcfcpa.com address — you'll sign in with this.</p>
   <label for="password">Choose a password</label>
   <input type="password" id="password" name="password" autocomplete="new-password" required>
-  <p class="hint">At least 8 characters.</p>
+  <p class="hint">At least {{ min_pw_len }} characters.</p>
   <label for="confirm">Confirm password</label>
   <input type="password" id="confirm" name="confirm" autocomplete="new-password" required>
   <button type="submit" class="btn">Request access</button>

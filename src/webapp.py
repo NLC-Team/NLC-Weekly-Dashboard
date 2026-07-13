@@ -167,6 +167,7 @@ _THROTTLE_MAX_KEYS = 5000
 
 _MAX_FAILS_EMAIL = 5    # per email in the window
 _MAX_FAILS_IP = 20      # per source IP in the window (covers many emails)
+_MAX_SIGNUP_IP = 5      # self-service sign-ups per source IP in the window
 
 
 def _throttled(kind: str, ident: str, limit: int) -> bool:
@@ -205,8 +206,15 @@ def _throttle_clear(kind: str, ident: str) -> None:
 
 # ---- Password helpers -----------------------------------------------------
 
+# Minimum length for any NEW or CHANGED password. Raised from 8 to 12 as cheap
+# defence-in-depth: this app is a candidate for internet exposure (Cloudflare),
+# where an 8-char floor is too weak against credential stuffing. Existing shorter
+# passwords still work at login — the floor only applies when a password is set.
+_MIN_PW_LEN = 12
+
+
 def _valid_password(pw) -> bool:
-    return isinstance(pw, str) and len(pw) >= 8
+    return isinstance(pw, str) and len(pw) >= _MIN_PW_LEN
 
 
 def _hash_password(pw: str) -> str:
@@ -327,6 +335,7 @@ def _inject_user():
         "all_staff": get_store().get_staff(),
         "csrf_token": _csrf_token(),
         "csp_nonce": _csp_nonce(),
+        "min_pw_len": _MIN_PW_LEN,
         # Admins are alerted to new sign-up requests in-app (a badge on the Staff
         # menu + a banner), since outbound email can't be relied on here.
         "pending_count": _pending_count() if is_admin else 0,
@@ -718,7 +727,7 @@ def setup():
         elif not config.is_allowed_email(email):
             error = f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address."
         elif not _valid_password(password):
-            error = "Password must be at least 8 characters."
+            error = f"Password must be at least {_MIN_PW_LEN} characters."
         elif (owner := get_store().get_account_by_email(email)) and owner["name"] != name:
             error = "That email is already used by another account."
         else:
@@ -807,6 +816,13 @@ def signup():
         return redirect(url_for("overview"))
     error = ""
     if request.method == "POST":
+        ip = _client_ip()
+        # Rate-limit self-service sign-ups per source IP so an internet-exposed
+        # instance can't be flooded with bogus pending accounts.
+        if _throttled("signup-ip", ip, _MAX_SIGNUP_IP):
+            return render_template("signup.html", done=False,
+                                   error="Too many sign-up requests from your network. "
+                                         "Please wait a few minutes and try again.")
         name = request.form.get("name", "").strip()
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
@@ -816,7 +832,7 @@ def signup():
         elif not config.is_allowed_email(email):
             error = f"Access is limited to @{config.ALLOWED_EMAIL_DOMAIN} email addresses."
         elif not _valid_password(password):
-            error = "Password must be at least 8 characters."
+            error = f"Password must be at least {_MIN_PW_LEN} characters."
         elif password != confirm:
             error = "The two passwords don't match."
         elif get_store().get_account_by_email(email):
@@ -828,12 +844,23 @@ def signup():
             except sqlite3.IntegrityError:
                 return render_template("signup.html",
                                        error="That name or email is already in use.")
+            # Count only successful creations toward the per-IP cap.
+            _throttle_hit("signup-ip", ip)
             _audit("signup", f"access request for {email}", actor=name)
-            # Best-effort admin heads-up; the reliable alert is the in-app
-            # pending badge/banner, so a mail failure never matters here.
-            _notify_admins_of_signup(name, email)
-            sent = _send_verify_code(name, email)
-            return redirect(url_for("verify", email=email, sent="1" if sent else "0"))
+            # Notifications are best-effort and must NOT block sign-up: outbound
+            # SMTP (M365) is unreachable here, and a synchronous send would hang
+            # the request ~20s per email (see mailer's socket timeout). Fire them
+            # off-thread and show the "pending admin approval" confirmation right
+            # away. The reliable alert is the in-app pending badge/banner in
+            # Staff & Roles, and an admin approving is the real gate to signing in.
+            def _notify_async(nm=name, em=email):
+                try:
+                    _notify_admins_of_signup(nm, em)
+                    _send_verify_code(nm, em)
+                except Exception:
+                    logging.exception("background sign-up notification failed")
+            threading.Thread(target=_notify_async, daemon=True).start()
+            return render_template("signup.html", done=True)
     return render_template("signup.html", error=error, done=False)
 
 
@@ -922,7 +949,7 @@ def account_password():
             if not acct["password_hash"] or not check_password_hash(acct["password_hash"], current):
                 error = "Your current password is incorrect."
             elif not _valid_password(new):
-                error = "New password must be at least 8 characters."
+                error = f"New password must be at least {_MIN_PW_LEN} characters."
             elif new != confirm:
                 error = "The new passwords don't match."
             else:
@@ -1211,7 +1238,7 @@ def staff_add():
         return redirect(url_for("staff",
                                 msg=f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address.", mt="err"))
     if not _valid_password(password):
-        return redirect(url_for("staff", msg="Set an initial password of at least 8 characters.", mt="err"))
+        return redirect(url_for("staff", msg=f"Set an initial password of at least {_MIN_PW_LEN} characters.", mt="err"))
     try:
         get_store().create_account(name, role, _hash_password(password), "active",
                                    email=email, email_verified=1, today=date.today())
@@ -1268,7 +1295,7 @@ def staff_reset():
         return redirect(url_for("staff",
                                 msg=f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address.", mt="err"))
     if not _valid_password(password):
-        return redirect(url_for("staff", msg="Password must be at least 8 characters.", mt="err"))
+        return redirect(url_for("staff", msg=f"Password must be at least {_MIN_PW_LEN} characters.", mt="err"))
     other = get_store().get_account_by_email(email)
     if other and other["name"] != name:
         return redirect(url_for("staff", msg="That email is used by another account.", mt="err"))
