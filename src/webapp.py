@@ -1046,16 +1046,17 @@ def projects():
             years=[], sel_year="", sel_month="")
 
     if show_done:
-        # Completed tab: show ONLY completed returns; type filter is disabled.
+        # Completed tab: show ONLY completed returns. Type filtering still works
+        # here (see type_chips/counts below), so the per-type numbers stay useful.
         relevant = [p for p in all_proj if p["completed"]]
-        ft = "All"
     else:
         relevant = [p for p in all_proj if not p["completed"]]
 
-    # Filter chips are built from the specific types actually present in the open
-    # returns, so a brand-new type from an import shows up on its own — no fixed list.
-    type_chips = sorted({p["return_type"] for p in all_proj if not p["completed"]},
-                        key=str.lower)
+    # Filter chips are built from the types actually present in whichever set is
+    # shown (open returns, or completed ones when "Show closed" is on), so the
+    # per-type counts on the chips always match the list — including in the closed
+    # view — and a brand-new type from an import shows up on its own, no fixed list.
+    type_chips = sorted({p["return_type"] for p in relevant}, key=str.lower)
     counts = {"All": len(relevant)}
     for t in type_chips:
         counts[t] = sum(1 for p in relevant if p["return_type"] == t)

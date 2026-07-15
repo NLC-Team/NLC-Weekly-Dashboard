@@ -49,9 +49,9 @@
        new types appear here automatically. In staff mode they narrow that
        employee's statements by type; otherwise they filter the return list. #}
     {% for name in ['All'] + type_chips %}
-    <a class="chip {{ 'active' if filter_type == name and not show_done }}"
-       href="{% if staff_mode %}{{ url_for('projects', staff=staff, filter=name) }}{% else %}{{ url_for('projects', filter=name, done='0') }}{% endif %}">
-      {{ name }}{% if not show_done %} ({{ counts.get(name, 0) }}){% endif %}
+    <a class="chip {{ 'active' if filter_type == name }}"
+       href="{% if staff_mode %}{{ url_for('projects', staff=staff, filter=name) }}{% else %}{{ url_for('projects', filter=name, done=('1' if show_done else '0')) }}{% endif %}">
+      {{ name }} ({{ counts.get(name, 0) }})
     </a>
     {% endfor %}
 
