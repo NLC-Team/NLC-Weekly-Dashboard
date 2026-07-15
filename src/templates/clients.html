@@ -23,7 +23,8 @@
   <div class="row mb-2" style="gap:12px;align-items:center;flex-wrap:wrap">
     <button type="submit" class="btn btn-danger" id="deleteBtn" disabled>Delete selected (0)</button>
     <button type="button" class="btn btn-secondary" id="selectAllBtn">Select all</button>
-    <span class="text-muted" style="font-size:12px">Tick the clients you want to remove, or use <strong>Select all</strong>. This cannot be undone.</span>
+    <button type="button" class="btn btn-secondary" id="selectClosedBtn">Select closed</button>
+    <span class="text-muted" style="font-size:12px">Tick the clients you want to remove, or use <strong>Select all</strong> / <strong>Select closed</strong> (selects every Done client and groups them at the top for review). This cannot be undone.</span>
     <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
            stroke="#374151" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -49,7 +50,7 @@
       </thead>
       <tbody id="clientsBody">
         {% for p in projects %}
-        <tr data-client="{{ p.client | lower }}">
+        <tr data-client="{{ p.client | lower }}" data-completed="{{ '1' if p.completed else '0' }}">
           <td><input type="checkbox" name="pkey" value="{{ p.project_key }}" class="rowChk"
                 style="width:16px;height:16px;cursor:pointer;accent-color:var(--danger)"></td>
           <td style="font-weight:600">{{ p.client }}</td>
@@ -77,6 +78,29 @@ function visibleBoxes() {
     return c.closest('tr').style.display !== 'none';
   });
 }
+// Every "closed" (Done) client's checkbox, regardless of the search filter.
+// "Select closed" is a whole-list category action: it — and the row reordering
+// it drives — both operate on this full set, so the selection and the displayed
+// order can never disagree (that mismatch was the source of the earlier bugs).
+function closedBoxes() {
+  return Array.from(document.querySelectorAll('.rowChk')).filter(function (c) {
+    return c.closest('tr').dataset.completed === '1';
+  });
+}
+// True when there's at least one box and every box is checked.
+function allChecked(boxes) {
+  return boxes.length > 0 && boxes.every(function (c) { return c.checked; });
+}
+// Set the checked state of an arbitrary set of checkboxes.
+function setBoxesChecked(boxes, state) {
+  boxes.forEach(function (c) { c.checked = state; });
+}
+// Refresh a toolbar toggle button's label + disabled state from its box set.
+function syncToggleButton(btn, boxes, clearLabel, selectLabel) {
+  if (!btn) return;
+  btn.textContent = allChecked(boxes) ? clearLabel : selectLabel + ' (' + boxes.length + ')';
+  btn.disabled = boxes.length === 0;
+}
 function updateCount() {
   // The form submits every checked box, visible or hidden by search, so the
   // delete count must reflect the true total that will be removed.
@@ -98,26 +122,57 @@ function updateCount() {
     master.indeterminate = visChecked > 0 && !allVisSelected;
   }
 
-  // The "Select all" button flips to "Clear selection" once everything's picked.
-  const selBtn = document.getElementById('selectAllBtn');
-  if (selBtn) {
-    selBtn.textContent = allVisSelected ? 'Clear selection' : 'Select all (' + boxes.length + ')';
-  }
+  // "Select all" flips to "Clear selection" once every visible row is picked.
+  // "Select closed" reflects the whole-list closed set (never just the filtered
+  // subset), so filtering down to open-only clients can't strand or misreport a
+  // closed selection, and it stays enabled whenever any Done client exists.
+  syncToggleButton(document.getElementById('selectAllBtn'), boxes,
+                   'Clear selection', 'Select all');
+  syncToggleButton(document.getElementById('selectClosedBtn'), closedBoxes(),
+                   'Clear closed', 'Select closed');
 }
-// Set every visible row's checkbox to `state`.
+// The server hands us rows already sorted alphabetically by client; remember
+// that order so it can be restored once "Select closed" is cleared.
+const clientsBody = document.getElementById('clientsBody');
+const originalRowOrder = Array.from(clientsBody.children);
+// Re-append rows in the desired order. Array.sort is stable, so a 0/1 key on
+// "closed" keeps each group in its original (alphabetical) relative order.
+function applyRowOrder(closedFirst) {
+  const rows = closedFirst
+    ? originalRowOrder.slice().sort(function (a, b) {
+        return (a.dataset.completed === '1' ? 0 : 1) - (b.dataset.completed === '1' ? 0 : 1);
+      })
+    : originalRowOrder;
+  rows.forEach(function (row) { clientsBody.appendChild(row); });
+}
+// Set every visible row's checkbox to `state`. Selecting by visibility is a
+// different intent from the closed-category grouping, so this also restores the
+// alphabetical order — i.e. using "Select all" or the header checkbox leaves
+// "Select closed" mode instead of stranding the table in closed-first order.
 function setAllVisible(state) {
-  visibleBoxes().forEach(function (c) { c.checked = state; });
+  setBoxesChecked(visibleBoxes(), state);
+  applyRowOrder(false);
   updateCount();
 }
 // Header checkbox in the table.
 function toggleAll(master) {
   setAllVisible(master.checked);
 }
-// Prominent toolbar button: select everything, or clear if already all selected.
+// Prominent toolbar button: select everything visible, or clear if already all
+// selected.
 function toggleSelectAll() {
-  const boxes = visibleBoxes();
-  const allSelected = boxes.length > 0 && boxes.every(function (c) { return c.checked; });
-  setAllVisible(!allSelected);
+  setAllVisible(!allChecked(visibleBoxes()));
+}
+// Toolbar button: select every closed (Done) client and bring them to the top
+// for review, or clear that selection and restore the original alphabetical
+// order. Operates on the whole list (not the search-filtered subset), so the
+// selection and the displayed order always agree.
+function toggleSelectClosed() {
+  const boxes = closedBoxes();
+  const activate = !allChecked(boxes);
+  setBoxesChecked(boxes, activate);
+  applyRowOrder(activate);
+  updateCount();
 }
 function filterClients(q) {
   const term = q.trim().toLowerCase();
@@ -135,6 +190,7 @@ function confirmDelete() {
 
 // Wire up the (formerly inline) handlers.
 document.getElementById('selectAllBtn').addEventListener('click', toggleSelectAll);
+document.getElementById('selectClosedBtn').addEventListener('click', toggleSelectClosed);
 document.getElementById('selectAll').addEventListener('change', function () { toggleAll(this); });
 document.getElementById('clientSearch').addEventListener('input', function () { filterClients(this.value); });
 document.getElementById('clientsBody').addEventListener('change', function (e) {
