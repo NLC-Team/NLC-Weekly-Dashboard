@@ -28,8 +28,8 @@
 
 <div class="charts-row">
   <div class="chart-card">
-    {% if workload_img %}
-      <img src="data:image/png;base64,{{ workload_img }}" alt="Overdue statements by employee" style="max-width:100%">
+    {% if has_workload %}
+      <img src="{{ url_for('workload_chart_png') }}?v={{ chart_version }}" alt="Overdue statements by employee" style="max-width:100%">
     {% else %}
       <div class="chart-empty">No overdue statements — everyone's caught up. 🎉</div>
     {% endif %}
@@ -37,7 +37,7 @@
   <div class="chart-card" style="display:flex;flex-direction:column">
     <div style="font-size:17px;font-weight:800;color:var(--text);margin-bottom:18px;letter-spacing:-.01em">Document Age</div>
     {% if age_dist %}
-    {% set bucket_colors = ['#bfdbfe','#93c5fd','#60a5fa','#3b82f6','#2563eb','#1e3a8a'] %}
+    {% set bucket_colors = ['#c3cee8','#9fb0da','#7288c4','#48609f','#2c4a86','#1a3f8f'] %}
     <div style="display:flex;gap:8px;align-items:flex-end;flex:1;min-height:130px">
       {% for label, count in age_dist %}
       {% set bar_h = ((count / max_age_count) * 120) | int %}

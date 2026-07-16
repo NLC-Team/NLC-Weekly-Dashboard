@@ -1,0 +1,89 @@
+{# The Returns detail panel (inner HTML of #detailPanel). Shared by projects.html
+   and the AJAX fragment (projects_ajax.html) so a row-select / doc-tick can
+   splice in exactly what a full render would produce. Expects: selected,
+   filter_type, show_done, sel_year, sel_month, all_types (+ global csrf_token). #}
+{% if selected %}
+<h2 style="margin-bottom:2px">{{ selected.client }}</h2>
+<p class="text-muted" style="font-size:12px;margin-bottom:14px">
+  {{ selected.received_docs }} of {{ selected.total_docs }} documents in ({{ selected.pct_complete }}%)
+  &nbsp;·&nbsp; open {{ selected.days_open }} days
+  &nbsp;·&nbsp; Employee:
+  {%- for a in selected.assignees %}
+    {%- if a == 'Unassigned' %} {{ a }}
+    {%- else %} <a href="{{ url_for('overdue', person=a) }}" style="color:var(--accent);font-weight:600">{{ a }}</a>{% endif %}
+    {%- if not loop.last %},{% endif %}
+  {%- endfor %}
+  {% if selected.overdue and not selected.completed %}&nbsp;·&nbsp; <span class="text-danger font-bold">OVERDUE</span>{% endif %}
+</p>
+
+<div class="row mb-2">
+  <form method="post" action="{{ url_for('project_type') }}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="pkey" value="{{ selected.project_key }}">
+    <input type="hidden" name="filter" value="{{ filter_type }}">
+    <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
+    <label style="margin-bottom:0;text-transform:none;font-size:12px;font-weight:600">Return type:</label>
+    <select name="return_type">
+      {% for rt in all_types %}
+      <option {{ 'selected' if selected.return_type == rt }}>{{ rt }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="custom_type" placeholder="or type a new one"
+           style="width:150px;font-size:12px;padding:6px 9px">
+    <button type="submit" class="btn btn-secondary btn-sm">Save type</button>
+  </form>
+
+  <form method="post" action="{{ url_for('project_complete') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="pkey" value="{{ selected.project_key }}">
+    <input type="hidden" name="filter" value="{{ filter_type }}">
+    <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
+    <button type="submit" class="btn {{ 'btn-secondary' if selected.completed else 'btn-primary' }}">
+      {{ 'Open client' if selected.completed else 'Close client' }}
+    </button>
+  </form>
+
+  {# Shareable direct link to THIS return — copies the full URL so staff can
+     bookmark it or paste it to a colleague. #}
+  <button type="button" class="btn btn-secondary copy-link-btn"
+          title="Copy a direct link to this return"
+          data-link="{{ url_for('projects', pkey=selected.project_key, done=('1' if selected.completed else '0'), year=sel_year, month=sel_month) }}">
+    Copy link
+  </button>
+
+  <form method="post" action="{{ url_for('project_delete') }}"
+        data-confirm="Delete {{ selected.client }} permanently? This removes the client and all their documents and cannot be undone."
+        style="margin-left:auto">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="pkey" value="{{ selected.project_key }}">
+    <input type="hidden" name="filter" value="{{ filter_type }}">
+    <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
+    <button type="submit" class="btn btn-danger">Delete client</button>
+  </form>
+</div>
+
+<p style="font-size:12px;font-weight:700;margin-bottom:4px">Client documents</p>
+<p class="text-muted" style="font-size:11px;margin-bottom:8px">Tick each document as it comes in from the client.</p>
+
+<div class="check-list">
+  {% for doc in selected.documents %}
+  <form method="post" action="{{ url_for('project_doc') }}" class="check-item {{ 'received' if doc.received else ('overdue-doc' if doc.overdue) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="item_key" value="{{ doc.item_key }}">
+    <input type="hidden" name="received" value="{{ '0' if doc.received else '1' }}">
+    <input type="checkbox" {{ 'checked' if doc.received }} class="doc-received">
+    <label data-toggle-prev>
+      <span style="font-weight:600">{{ doc.title }}</span>
+      <span class="text-muted"> — {{ doc.status }} ({{ doc.age_days }}d)</span>
+    </label>
+  </form>
+  {% else %}
+  <p class="text-muted" style="font-size:12px">No documents for this return.</p>
+  {% endfor %}
+</div>
+
+{% else %}
+<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:13px">
+  Select a return from the list.
+</div>
+{% endif %}

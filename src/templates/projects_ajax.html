@@ -1,0 +1,12 @@
+{# Tiny fragment returned when the Returns page fetches a return via JS
+   (X-Requested-With: fetch) instead of a full navigation. It carries only what
+   the page's swapDetailPanel() and syncRow() read — the detail panel and the
+   single selected row — so a click/tick transfers a few KB rather than
+   re-sending the whole (~0.5 MB) page. IDs and markup match projects.html
+   exactly because both pull from the same _project_row / _project_detail
+   partials. #}
+{% from "_project_row.html" import project_row %}
+<table><tbody id="returnsBody">
+{% if selected %}{{ project_row(selected, selected, filter_type, show_done, sel_year, sel_month) }}{% endif %}
+</tbody></table>
+<div id="detailPanel">{% include "_project_detail.html" %}</div>

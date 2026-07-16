@@ -12,33 +12,47 @@
 <meta name="apple-mobile-web-app-title" content="NLC Dashboard">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <style>
+/* Sign-in shell. Mirrors the dashboard's letterhead identity (see app.css):
+   Georgia titles, the firm navy, a faintly warm "paper" field, and the
+   letterhead double rule (navy over green) beneath the mark. Fonts are system
+   faces (Georgia / Segoe UI) so this works offline and under font-src 'self'. */
 :root{
-  --navy:#1a3f8f;--green:#4a9d4f;--text:#0f1923;--muted:#5b6675;--border:#d1d9e0;
-  --danger:#b91c1c;--danger-bg:#fee2e2;--danger-border:#fca5a5;
-  --ok:#15803d;--ok-bg:#f0fdf4;--ok-border:#86efac;--accent:#1d4ed8;
+  --navy:#1a3f8f;--green:#4a9d4f;--text:#16202e;--muted:#55606f;--border:#e4ddd0;
+  --danger:#b91c1c;--danger-bg:#fdeeee;--danger-border:#f2b8b8;
+  --ok:#15803d;--ok-bg:#f0fdf4;--ok-border:#9ae6b0;--accent:#1a3f8f;
+  --serif:Georgia,'Times New Roman',serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(160deg,#f4f7fb,#e4ecf6);
-  color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-.auth-card{background:#fff;border:1px solid var(--border);border-radius:14px;
-  box-shadow:0 12px 44px rgba(15,25,35,.12);width:100%;max-width:404px;padding:30px 30px 26px}
-.auth-logo{display:flex;justify-content:center;margin-bottom:16px}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+  background:radial-gradient(1200px 600px at 50% -10%, #fbf9f4, #efe9dd);
+  color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
+  -webkit-font-smoothing:antialiased}
+.auth-card{background:#fff;border:1px solid var(--border);border-radius:16px;
+  box-shadow:0 1px 2px rgba(20,41,79,.06),0 18px 50px rgba(20,41,79,.14);
+  width:100%;max-width:404px;padding:32px 32px 26px}
+.auth-logo{display:flex;justify-content:center;margin-bottom:14px}
 .auth-logo svg{display:block}
-h1{font-size:20px;font-weight:800;text-align:center;margin-bottom:4px}
+/* The signature double rule, echoing the letterhead frame. */
+.auth-rule{height:2px;background:var(--navy);position:relative;margin:0 auto 18px;width:56px;border-radius:2px}
+.auth-rule::after{content:"";position:absolute;left:0;right:0;bottom:-4px;height:1.5px;background:var(--green)}
+h1{font-family:var(--serif);font-size:23px;font-weight:700;text-align:center;
+  letter-spacing:-.01em;margin-bottom:5px}
 .sub{font-size:12.5px;color:var(--muted);text-align:center;margin-bottom:22px;line-height:1.5}
 label{display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;
   letter-spacing:.05em;margin:0 0 5px}
 input[type=text],input[type=password],input[type=email]{width:100%;padding:10px 12px;border:1px solid var(--border);
-  border-radius:8px;font-size:14px;font-family:inherit;margin-bottom:15px;background:#fff;color:var(--text)}
-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(29,78,216,.12)}
-.btn{width:100%;padding:11px;border:none;border-radius:8px;background:var(--navy);color:#fff;
+  border-radius:9px;font-size:14px;font-family:inherit;margin-bottom:15px;background:#fff;color:var(--text);
+  transition:border-color .12s,box-shadow .12s}
+input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(26,63,143,.14)}
+.btn{width:100%;padding:12px;border:none;border-radius:9px;background:var(--navy);color:#fff;
   font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:background .12s}
 .btn:hover{background:#163475}
-.msg{padding:10px 13px;border-radius:8px;font-size:12.5px;font-weight:600;margin-bottom:16px}
+.btn:focus-visible{outline:2px solid var(--navy);outline-offset:2px}
+.msg{padding:10px 13px;border-radius:9px;font-size:12.5px;font-weight:600;margin-bottom:16px}
 .msg-err{background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger-border)}
 .msg-ok{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-border)}
 .auth-foot{text-align:center;font-size:12.5px;color:var(--muted);margin-top:18px}
-.auth-foot a{color:var(--accent);text-decoration:none;font-weight:600}
+.auth-foot a{color:var(--navy);text-decoration:none;font-weight:600}
 .auth-foot a:hover{text-decoration:underline}
 .hint{font-size:11px;color:var(--muted);margin:-9px 0 15px}
 </style>
@@ -55,6 +69,7 @@ input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(29
         </text>
       </svg>
     </div>
+    <div class="auth-rule"></div>
     {% block auth %}{% endblock %}
   </div>
 <script nonce="{{ csp_nonce }}">

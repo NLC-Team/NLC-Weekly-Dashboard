@@ -1,0 +1,274 @@
+/* NLC Dashboard — application shell styles.
+ *
+ * Moved out of base.html's inline <style> so the browser downloads and parses it
+ * ONCE, then reuses it (from cache) on every tab. It's served with a long,
+ * immutable Cache-Control and cache-busted by the file's mtime (?v=…, see
+ * static_url in webapp.py), so an edit here still reaches every browser.
+ *
+ * Visual identity — grounded in the firm's own letterhead rather than a generic
+ * admin theme:
+ *   - Colour comes from the NLC letterhead: navy #1a3f8f + green #4a9d4f, on a
+ *     faintly warm "paper" canvas so the whole thing reads like a working ledger
+ *     rather than cold app chrome.
+ *   - Georgia (the letterhead's own serif) sets the page titles, the KPI figures
+ *     and the wordmark. It's a system font, so it needs no download and works
+ *     offline — which matters under our CSP (font-src 'self') on machines that
+ *     may never reach the internet. Body/UI text stays in Segoe UI.
+ *   - Every figure is set in tabular lining numerals, so columns of numbers line
+ *     up to the digit — the way an accountant expects a ledger to.
+ *   - Signature: the letterhead's double rule (a navy line over a thin green
+ *     one) is distilled into the divider under every page title. It appears once
+ *     per page and quietly stamps each screen as NLC's. */
+
+/* Tab navigation is instant — no cross-document view-transition crossfade.
+ * That crossfade fired on every full-page navigation (i.e. every sidebar-tab
+ * click) and, worse, the browser froze the old page while it prepared the
+ * transition — which read as "lag" on tab switches even though the page itself
+ * loads fast. Dropping it lets a tab swap in immediately. The sidebar links are
+ * prerendered on hover (speculation rules in base.html), so the next page is
+ * usually already fully built and simply appears the moment you click. */
+
+:root {
+  /* Firm palette — pulled straight from the letterhead. */
+  --navy: #1a3f8f;          /* the firm navy: links, primary actions, active nav */
+  --navy-deep: #14294f;     /* the sidebar "letterhead field" */
+  --green: #4a9d4f;         /* the firm green: the positive / active spark + rules */
+  --green-ink: #3d7a42;     /* green dark enough to read as text on white */
+
+  --bg: #f6f4ee;            /* faintly warm paper, not cold blue-grey */
+  --card: #ffffff;
+  --sidebar: var(--navy-deep);
+  --sidebar-active: #1f3d70;
+  --sidebar-hover: #1b345f;
+  --sidebar-text: #cdd8ea;
+
+  --accent: #1a3f8f;        /* alias to the firm navy so every var(--accent) in the
+                               templates snaps to the brand instead of a stray blue */
+  --accent-light: #e5ecf8;
+
+  --text: #16202e;
+  --muted: #55606f;
+
+  --ok: #15803d;
+  --ok-bg: #f0fdf4;
+  --ok-border: #9ae6b0;
+  --warn: #b45309;
+  --danger: #b91c1c;
+  --danger-bg: #fdeeee;
+  --danger-border: #f2b8b8;
+
+  --border: #e4ddd0;        /* warm hairline that belongs to the paper */
+  --border-cool: #e6e9ef;   /* cooler hairline for lines inside white cards */
+
+  --shadow: 0 1px 2px rgba(20,41,79,.05), 0 6px 20px rgba(20,41,79,.05);
+  --serif: Georgia, 'Times New Roman', 'Iowan Old Style', serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  display:flex;height:100vh;
+  font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+  background:var(--bg);color:var(--text);font-size:15px;overflow:hidden;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+
+/* Sidebar — the navy "letterhead" rail. */
+.sidebar{width:224px;background:var(--sidebar);display:flex;flex-direction:column;
+  flex-shrink:0;overflow-y:auto;
+  background-image:linear-gradient(180deg,#173058,var(--navy-deep) 240px);}
+.sidebar-brand{color:#fff;font-size:14px;font-weight:700;line-height:1.45;
+  letter-spacing:.01em;border-bottom:1px solid rgba(255,255,255,.08)}
+/* Nav links sit slightly inset; the active one carries a green ledger-marker on
+ * its leading edge — the same green rule as the letterhead's inner frame. */
+.sidebar a{display:block;position:relative;color:var(--sidebar-text);
+  text-decoration:none;padding:11px 20px 11px 21px;font-size:13px;font-weight:600;
+  letter-spacing:.01em;transition:background .12s,color .12s}
+.sidebar a:hover{background:var(--sidebar-hover);color:#fff}
+.sidebar a.active{background:var(--sidebar-active);color:#fff;font-weight:700}
+.sidebar a.active::before{content:"";position:absolute;left:0;top:6px;bottom:6px;
+  width:3px;background:var(--green);border-radius:0 2px 2px 0}
+
+/* Main content */
+.main{flex:1;overflow-y:auto;padding:30px 40px 44px}
+
+/* Typography — Georgia titles carry the firm's letterhead voice; the double rule
+ * beneath every <h1> is the signature that stamps each page as NLC's. */
+h1{font-family:var(--serif);font-size:28px;font-weight:700;color:var(--text);
+  letter-spacing:-.01em;line-height:1.15;position:relative;
+  padding-bottom:12px;margin-bottom:6px;border-bottom:2px solid var(--navy)}
+h1::after{content:"";position:absolute;left:0;width:100%;bottom:-4px;height:1.5px;
+  background:var(--green)}
+h2{font-size:16px;font-weight:700;color:var(--text);margin-bottom:12px;
+  letter-spacing:-.005em}
+.subtitle{color:var(--muted);font-size:13px;margin:14px 0 24px;line-height:1.55;
+  max-width:80ch}
+.subtitle a{color:var(--navy);font-weight:600}
+
+/* Cards */
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:22px 24px;box-shadow:var(--shadow)}
+.card+.card{margin-top:14px}
+.card-title{font-size:15px;font-weight:700;margin-bottom:14px;letter-spacing:-.005em}
+
+/* KPI row — the big figures are set in Georgia with tabular numerals so they read
+ * as ledger totals, not dashboard widgets. */
+.kpi-row{display:grid;gap:14px;margin-bottom:26px}
+.kpi-3{grid-template-columns:repeat(3,1fr)}
+.kpi-4{grid-template-columns:repeat(4,1fr)}
+.kpi-card{background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:20px 24px;box-shadow:var(--shadow)}
+/* Overdue KPI when >0: a red ledger-marker down the leading edge, not a full red
+ * card — loud enough to catch the eye, quiet enough to keep the number legible. */
+.kpi-alert{border-left:3px solid var(--danger);padding-left:21px}
+.kpi-value{font-family:var(--serif);font-size:38px;font-weight:700;line-height:1.05;
+  letter-spacing:-.02em;font-variant-numeric:tabular-nums lining-nums}
+.kpi-label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.08em;margin-top:7px}
+
+/* Tables — figures line up to the digit; the header is a quiet hairline rule. */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums lining-nums}
+th{background:transparent;font-weight:700;font-size:11px;padding:11px 14px;
+  text-align:left;border-bottom:1.5px solid var(--navy);white-space:nowrap;
+  color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+td{padding:11px 14px;border-bottom:1px solid var(--border-cool);font-size:13px}
+tr:hover td{background:#faf9f5}
+/* Overdue: a soft tint + red leading marker keeps the row unmistakable while the
+ * text itself stays fully legible (the old all-red-text row was harder to read). */
+tr.overdue td{background:#fdf2f2}
+tr.overdue td:first-child{box-shadow:inset 3px 0 0 var(--danger)}
+tr.done td{color:var(--muted)}
+tr.selected td{background:var(--accent-light)!important}
+/* Brief highlight when you arrive at a return via a client deep-link. */
+@keyframes rowflash{0%{background:#fde6b8}60%{background:#fde6b8}100%{background:var(--accent-light)}}
+tr.project-row.flash td{animation:rowflash 1.6s ease-out}
+@media (prefers-reduced-motion: reduce){
+  tr.project-row.flash td{animation:none;background:var(--accent-light)}
+}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:none;
+  border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;
+  text-decoration:none;transition:background .12s,box-shadow .12s,transform .04s;
+  letter-spacing:.01em}
+.btn:active{transform:translateY(.5px)}
+.btn-primary{background:var(--navy);color:#fff}
+.btn-primary:hover{background:#163475}
+.btn-secondary{background:#ece8df;color:var(--text)}
+.btn-secondary:hover{background:#e1dccf}
+.btn-danger{background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger-border)}
+.btn-danger:hover{background:#fbdcdc}
+.btn-sm{padding:6px 12px;font-size:11px}
+
+/* Forms */
+input[type=text],input[type=number],input[type=email],input[type=password],select,textarea{
+  padding:8px 11px;border:1px solid var(--border);border-radius:8px;
+  font-size:12px;font-family:inherit;background:#fff;color:var(--text);
+  transition:border-color .12s,box-shadow .12s}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--navy);
+  box-shadow:0 0 0 3px rgba(26,63,143,.14)}
+/* Visible keyboard focus for links, buttons and controls (accessibility floor). */
+a:focus-visible,button:focus-visible,summary:focus-visible,
+input:focus-visible,select:focus-visible,[tabindex]:focus-visible{
+  outline:2px solid var(--navy);outline-offset:2px;border-radius:4px}
+label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.05em;display:block;margin-bottom:5px}
+
+/* Badges */
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:10px;
+  font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.badge-admin{background:#fbe4e4;color:#991b1b}
+.badge-manager{background:var(--accent-light);color:#1c3f86}
+.badge-viewer{background:#dcf3e3;color:#065f46}
+.badge-overdue{background:var(--danger-bg);color:var(--danger)}
+.badge-open{background:#e2eefb;color:#1c3f86}
+.badge-done{background:#dcf3e3;color:var(--ok)}
+
+/* Filter chips */
+.chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:18px;align-items:center}
+.chip{padding:6px 14px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;
+  border:none;font-family:inherit;text-decoration:none;transition:background .12s,color .12s;
+  font-variant-numeric:tabular-nums}
+.chip.active{background:var(--navy);color:#fff}
+.chip:not(.active){background:#ece8df;color:var(--text)}
+.chip:not(.active):hover{background:#e1dccf}
+
+/* Charts */
+.charts-row{display:grid;grid-template-columns:1.4fr 1fr;gap:14px;margin-bottom:18px}
+.chart-card{background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:16px 18px;box-shadow:var(--shadow)}
+.chart-card img{width:100%;height:auto;display:block}
+.chart-empty{display:flex;align-items:center;justify-content:center;height:140px;
+  color:var(--muted);font-size:12px}
+
+/* Banner */
+.banner{border-radius:12px;padding:15px 18px;margin-bottom:18px}
+.banner-ok{background:var(--ok-bg);border:1px solid var(--ok-border)}
+.banner-warn{background:var(--danger-bg);border:1px solid var(--danger-border)}
+.banner-ok-text{color:var(--ok);font-size:15px;font-weight:700}
+.banner-warn-title{color:var(--danger);font-size:16px;font-weight:700;margin-bottom:6px}
+.banner-item{font-size:15px;color:var(--text);margin-top:3px}
+
+/* Flash / inline message */
+.msg{padding:11px 16px;border-radius:9px;margin-bottom:16px;font-size:12px;font-weight:600}
+.msg-ok{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-border)}
+.msg-err{background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger-border)}
+
+/* Two-column layout for projects */
+.split{display:grid;grid-template-columns:1fr 1.2fr;gap:16px;min-height:0}
+.split-left{overflow:auto}
+.split-right{background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:22px;overflow-y:auto;box-shadow:var(--shadow)}
+.project-row{cursor:pointer}
+
+/* Checkbox list */
+.check-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.check-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;
+  border:1px solid var(--border);background:#fff;transition:border-color .12s,background .12s}
+.check-item.received{background:var(--ok-bg);border-color:var(--ok-border)}
+.check-item.overdue-doc{background:var(--danger-bg);border-color:var(--danger-border)}
+.check-item label{font-size:12px;font-weight:400;color:var(--text);text-transform:none;
+  letter-spacing:0;cursor:pointer;margin-bottom:0}
+.check-item input[type=checkbox]{width:16px;height:16px;cursor:pointer;accent-color:var(--green)}
+
+/* Import steps */
+.step-row{display:flex;gap:0;margin-bottom:24px}
+.step{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--muted)}
+.step.active{color:var(--navy)}
+.step-num{width:24px;height:24px;border-radius:50%;border:2px solid currentColor;
+  display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+.step-sep{width:40px;height:2px;background:var(--border);align-self:center;margin:0 6px}
+
+/* Mapping grid */
+.map-grid{display:grid;grid-template-columns:200px 1fr;gap:8px 16px;align-items:center}
+.map-grid .req{color:var(--danger);margin-left:2px}
+
+/* Util */
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.text-muted{color:var(--muted)}
+.text-ok{color:var(--ok)}
+.text-danger{color:var(--danger)}
+.text-accent{color:var(--navy)}
+.font-bold{font-weight:700}
+.mt-1{margin-top:8px}
+.mt-2{margin-top:16px}
+.mb-1{margin-bottom:8px}
+.mb-2{margin-bottom:16px}
+.monospace{font-family:'Consolas','Courier New',monospace;font-size:11px}
+
+/* Responsive — below 720px the fixed rail would crowd the content off-screen, so
+ * the sidebar becomes a horizontal top bar and the page scrolls normally. */
+@media (max-width: 720px){
+  body{flex-direction:column;height:auto;min-height:100vh;overflow:auto}
+  .sidebar{width:100%;flex-direction:row;flex-wrap:wrap;align-items:center;
+    overflow-x:auto;background-image:none}
+  .sidebar-brand{width:100%;border-bottom:1px solid rgba(255,255,255,.08)}
+  /* Cap the letterhead mark so it doesn't balloon to full width up top. */
+  .sidebar-brand>div:first-child{max-width:148px;margin:0 auto}
+  .sidebar a{padding:11px 14px}
+  .sidebar a.active::before{top:auto;bottom:0;left:6px;right:6px;width:auto;height:3px;
+    border-radius:2px 2px 0 0}
+  .main{padding:22px 18px 40px}
+  .kpi-3,.kpi-4{grid-template-columns:repeat(2,1fr)}
+  .charts-row{grid-template-columns:1fr}
+  .split{grid-template-columns:1fr}
+}

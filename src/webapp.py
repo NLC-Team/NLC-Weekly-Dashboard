@@ -7,6 +7,7 @@ Uses Waitress (production WSGI server) when available, falls back to Flask dev s
 from __future__ import annotations
 
 import base64
+import gzip
 import io
 import logging
 import os
@@ -342,6 +343,23 @@ def _inject_user():
     }
 
 
+@app.template_global()
+def static_url(filename: str) -> str:
+    """A cache-busted URL for a file under /static.
+
+    Appends the file's last-modified time as ?v=<mtime>. Static assets are served
+    with a long, immutable Cache-Control (see _no_store_dynamic), so the browser
+    reuses them from disk on every tab without a round trip; changing the ?v=
+    (i.e. editing the file) is what makes a new version reach clients. Falls back
+    to a plain URL if the file can't be stat'd."""
+    url = url_for("static", filename=filename)
+    try:
+        mtime = int((Path(app.static_folder) / filename).stat().st_mtime)
+        return f"{url}?v={mtime}"
+    except OSError:
+        return url
+
+
 # Content-Security-Policy, built per request so script-src can pin a fresh nonce.
 #   - script-src 'self' + per-request nonce, NO 'unsafe-inline': every inline
 #     <script> carries nonce="{{ csp_nonce }}", and there are no inline event
@@ -377,10 +395,22 @@ def _no_store_dynamic(resp):
     copy. Static brand assets (/static, manifest) stay cacheable — the service
     worker handles those. Mirrors sw.js's 'always live from network' policy."""
     path = request.path or ""
-    if not (path.startswith("/static/") or path == "/manifest.webmanifest"):
+    # Cacheable, versioned assets: /static (icons + app.css, cache-busted by
+    # static_url's ?v=<mtime>) and /charts (chart PNGs, cache-busted by
+    # ?v=<data_version>). Everything else is live, per-user data — never cached,
+    # so a reclassify/import/mark-received shows on the next load, not a stale copy.
+    cacheable = path.startswith("/static/") or path.startswith("/charts/")
+    if not (cacheable or path == "/manifest.webmanifest"):
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
+    elif path.startswith("/static/"):
+        # Immutable brand assets + app.css. The ?v=<mtime> makes any edit a new
+        # URL, so a year-long cache is safe and skips even a revalidation round
+        # trip. Set explicitly to override Flask's conservative default of
+        # "no-cache" (which would force a revalidation on every navigation).
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    # /charts/* set their own (data-version-keyed) Cache-Control in the route.
 
     # Baseline security headers on every response (pages AND static assets):
     #   - CSP: see _CSP above — the main XSS/clickjacking/injection defence.
@@ -401,7 +431,41 @@ def _no_store_dynamic(resp):
     if cloudflare_hardening.enabled():
         resp.headers.setdefault("Strict-Transport-Security",
                                 "max-age=31536000; includeSubDomains")
+
+    _gzip_response(resp)
     return resp
+
+
+# Text responses (HTML/CSS/JS/JSON/SVG) are gzipped when the client accepts it.
+# The dashboard's pages are large — a full returns/person list is several hundred
+# KB of markup — so this cuts what crosses the wire by ~80%, which is what other
+# computers on the LAN (and over the Cloudflare tunnel) feel most. PNGs/other
+# already-compressed types and streamed static files are left untouched.
+_GZIP_TYPES = ("text/html", "text/css", "text/plain", "application/javascript",
+               "text/javascript", "application/json", "image/svg+xml")
+
+
+def _gzip_response(resp) -> None:
+    try:
+        if "gzip" not in request.headers.get("Accept-Encoding", "").lower():
+            return
+        if resp.direct_passthrough or resp.status_code >= 300:
+            return
+        if resp.headers.get("Content-Encoding"):
+            return
+        ctype = (resp.content_type or "").split(";", 1)[0].strip().lower()
+        if ctype not in _GZIP_TYPES:
+            return
+        body = resp.get_data()
+        if len(body) < 1024:            # not worth it for tiny responses
+            return
+        resp.set_data(gzip.compress(body, 6))
+        resp.headers["Content-Encoding"] = "gzip"
+        resp.headers["Content-Length"] = str(len(resp.get_data()))
+        resp.headers.add("Vary", "Accept-Encoding")
+    except Exception:
+        # Compression is a nice-to-have; never let it break a response.
+        logging.exception("gzip failed; sending uncompressed")
 
 
 # ---- Access decorators ----------------------------------------------------
@@ -580,11 +644,11 @@ def _fig_to_b64(fig: Figure) -> str:
 
 def _style_ax(ax, title: str):
     """Apply consistent professional styling to a chart axis."""
-    ax.set_title(title, fontsize=13, fontweight="bold", color="#0f1923", pad=12)
+    ax.set_title(title, fontsize=13, fontweight="bold", color="#16202e", pad=12)
     ax.spines[["top", "right", "left"]].set_visible(False)
-    ax.spines["bottom"].set_color("#d1d9e0")
-    ax.tick_params(axis="both", colors="#374151", labelsize=10, length=0)
-    ax.yaxis.grid(True, color="#e8eef4", linewidth=0.8, zorder=0)
+    ax.spines["bottom"].set_color("#d9d2c4")
+    ax.tick_params(axis="both", colors="#55606f", labelsize=10, length=0)
+    ax.yaxis.grid(True, color="#eee9df", linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
     ax.set_facecolor("white")
 
@@ -617,7 +681,9 @@ def _workload_chart(overdue_items: list) -> str | None:
         # Employees worst-first; statement types most-common-first (stable colours).
         people = sorted(by_person, key=lambda p: sum(by_person[p].values()), reverse=True)
         types = [t for t, _ in overall.most_common()]
-        palette = ["#dc2626", "#2563eb", "#d97706", "#059669", "#7c3aed",
+        # Anchored on the firm's letterhead navy + green so the most common
+        # statement types read in brand colour, then distinct hues after.
+        palette = ["#1a3f8f", "#4a9d4f", "#d97706", "#b91c1c", "#7c3aed",
                    "#0891b2", "#db2777", "#65a30d", "#c2410c", "#4b5563"]
         colors = {t: palette[i % len(palette)] for i, t in enumerate(types)}
 
@@ -645,7 +711,7 @@ def _workload_chart(overdue_items: list) -> str | None:
         # Grand total on top of each employee's column.
         for xi, tot in zip(x, totals):
             ax.text(xi, tot + ymax * 0.02, str(tot), ha="center", va="bottom",
-                    fontsize=14, fontweight="800", color="#0f1923")
+                    fontsize=14, fontweight="800", color="#16202e")
 
         ax.set_xticks(x)
         ax.set_xticklabels(people, rotation=35, ha="right")
@@ -680,10 +746,10 @@ def _age_chart(age_distribution: list) -> str | None:
     values = [d[1] for d in age_distribution]
     fig = Figure(figsize=(5.8, 3.6), facecolor="white")
     ax = fig.add_subplot(111)
-    bars = ax.bar(range(len(labels)), values, color="#1d4ed8",
+    bars = ax.bar(range(len(labels)), values, color="#1a3f8f",
                   zorder=3, linewidth=0, width=0.6)
-    # Gradient-style: tint bars by age severity
-    colors = ["#93c5fd", "#60a5fa", "#3b82f6", "#1d4ed8", "#1e40af", "#1e3a8a"]
+    # Tint bars from light to deep navy by age severity (oldest = firm navy).
+    colors = ["#c3cee8", "#9fb0da", "#7288c4", "#48609f", "#2c4a86", "#1a3f8f"]
     for bar, col in zip(bars, colors[:len(bars)]):
         bar.set_color(col)
     ax.set_xticks(range(len(labels)))
@@ -692,7 +758,7 @@ def _age_chart(age_distribution: list) -> str | None:
     for b, v in zip(bars, values):
         if v:
             ax.text(b.get_x() + b.get_width() / 2, v + 0.15, str(v),
-                    ha="center", va="bottom", fontsize=10, fontweight="700", color="#0f1923")
+                    ha="center", va="bottom", fontsize=10, fontweight="700", color="#16202e")
     fig.tight_layout(pad=1.4)
     return _fig_to_b64(fig)
 
@@ -707,6 +773,27 @@ def _workload_chart_cached(overdue_items: list) -> str | None:
             _chart_cache["img"] = _workload_chart(overdue_items)
             _chart_cache["key"] = key
         return _chart_cache["img"]
+
+
+@app.route("/charts/workload.png")
+@login_required
+def workload_chart_png():
+    """The 'Overdue statements by employee' chart as a standalone PNG.
+
+    Served as its own image instead of a base64 blob inlined into the Overview
+    HTML: the browser caches the picture and reuses it on repeat visits, and the
+    Overview page itself gets ~tens of KB lighter (it's re-sent on every load
+    because dynamic pages are no-store). The ?v=<data_version> the template
+    appends busts the cache the instant the underlying data changes."""
+    data = _get_data()
+    b64 = _workload_chart_cached(data["overdue"])
+    if not b64:
+        abort(404)  # nobody overdue → no chart (Overview shows the "caught up" note)
+    resp = app.response_class(base64.b64decode(b64), mimetype="image/png")
+    # Private (the visitor's browser only, never the shared Cloudflare edge) and
+    # version-keyed, so it can be cached hard without ever going stale.
+    resp.headers["Cache-Control"] = "private, max-age=86400"
+    return resp
 
 
 # ---- Authentication routes -----------------------------------------------
@@ -977,7 +1064,11 @@ def overview():
     return render_template("overview.html",
                            data=data,
                            overdue_days=_overdue_days(),
-                           workload_img=_workload_chart_cached(data["overdue"]),
+                           # The chart is fetched as its own cacheable image
+                           # (see workload_chart_png); pass only whether one
+                           # exists and a version to cache-bust its URL.
+                           has_workload=bool(_workload_chart_cached(data["overdue"])),
+                           chart_version=get_store().data_version,
                            age_dist=age_dist,
                            max_age_count=max_age_count)
 
@@ -1085,6 +1176,15 @@ def projects():
     # reclassify dropdown; admins can also type a brand-new one in the box.
     all_types = sorted({p["return_type"] for p in all_proj} | {config.UNCLASSIFIED},
                        key=str.lower)
+    # AJAX select/tick (page.js sends X-Requested-With: fetch): return just the
+    # detail panel + the one selected row, not the whole list. The page splices
+    # these in via swapDetailPanel()/syncRow(), so a click costs a few KB instead
+    # of re-sending the entire (up to ~0.5 MB) returns page every time.
+    if request.headers.get("X-Requested-With") == "fetch":
+        return render_template("projects_ajax.html",
+                               selected=selected, filter_type=ft,
+                               show_done=show_done, all_types=all_types,
+                               sel_year=sel_year, sel_month=sel_month)
     return render_template("projects.html",
                            staff_mode=False, staff="", staff_items=None,
                            all_staff_names=all_staff_names,
