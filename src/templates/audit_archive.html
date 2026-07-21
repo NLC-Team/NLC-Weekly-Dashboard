@@ -1,16 +1,23 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Audit archive <span class="text-muted" style="font-size:14px;font-weight:600">· {{ week }}</span></h1>
-<p class="subtitle">Archived security events for ISO week {{ week }}. Admin-only; preserved,
-not deleted. <a href="{{ url_for('audit') }}" style="color:var(--accent);font-weight:600">← Back to this week</a></p>
+{% set current = (weeks | selectattr('week', 'equalto', week) | first) %}
+<h1>Audit archive{% if current %} <span class="text-muted" style="font-size:14px;font-weight:600">· Week {{ current.num }}</span>{% endif %}</h1>
+<p class="subtitle">Archived security events for
+{% if current %}<strong>Week {{ current.num }}</strong> ({{ current.first_ts | audit_span(current.last_ts) }}, ISO {{ week }}){% else %}ISO week {{ week }}{% endif %}.
+Admin-only; preserved, not deleted.
+<a href="{{ url_for('audit') }}" style="color:var(--accent);font-weight:600">← Back to this week</a></p>
 
 {% if weeks %}
 <div class="card mb-2">
   <div class="card-title">Archived weeks</div>
-  <div class="chips">
+  <div class="weeks-grid">
     {% for w in weeks %}
-    <a class="chip {{ 'active' if w.week == week }}" href="{{ url_for('audit_archive', week=w.week) }}"
-       title="{{ w.first_ts[:10] }} to {{ w.last_ts[:10] }}">{{ w.week }} ({{ w.count }})</a>
+    <a class="week-card {{ 'active' if w.week == week }}" href="{{ url_for('audit_archive', week=w.week) }}">
+      <div class="week-card-num">Week {{ w.num }}</div>
+      <div class="week-card-span">{{ w.first_ts | audit_span(w.last_ts) }}</div>
+      <div class="week-card-meta">{{ w.count }} event{{ '' if w.count == 1 else 's' }}
+        · <span class="iso">{{ w.week }}</span></div>
+    </a>
     {% endfor %}
   </div>
 </div>

@@ -640,12 +640,18 @@ class Store:
             return len(rows)
 
     def archived_weeks(self) -> list[dict]:
-        """Each archived ISO week (newest first) with its event count and span."""
+        """Each archived ISO week (newest first) with its event count and span.
+
+        `num` is a running week number that reads plainly for people: the
+        earliest archived week is Week 1 and each later week counts up from
+        there, independent of the ISO calendar code."""
         rows = self.conn.execute(
             "SELECT week, COUNT(*) AS n, MIN(ts) AS first_ts, MAX(ts) AS last_ts "
             "FROM audit_archive GROUP BY week ORDER BY week DESC").fetchall()
-        return [{"week": r["week"], "count": r["n"],
-                 "first_ts": r["first_ts"], "last_ts": r["last_ts"]} for r in rows]
+        total = len(rows)
+        return [{"week": r["week"], "count": r["n"], "num": total - i,
+                 "first_ts": r["first_ts"], "last_ts": r["last_ts"]}
+                for i, r in enumerate(rows)]
 
     def archived_events(self, week: str, limit: int = 5000) -> list[dict]:
         """All events in one archived week, newest first."""

@@ -323,6 +323,21 @@ def _audit_time(ts):
     return f"{hour12}:{dt.minute:02d}:{dt.second:02d} {meridiem}"
 
 
+@app.template_filter("audit_span")
+def _audit_span(first_ts, last_ts):
+    """Compact date range for an archived week, e.g. 'Jul 6 – 12, 2026' or
+    'Jun 29 – Jul 5, 2026' when it straddles two months. When every event fell
+    on a single day, show just that one date (no dash)."""
+    a, b = _parse_ts(first_ts), _parse_ts(last_ts)
+    if not a or not b:
+        return _audit_date(first_ts)
+    if (a.year, a.month, a.day) == (b.year, b.month, b.day):
+        return f"{_MONTHS[a.month - 1]} {a.day}, {a.year}"
+    if a.month == b.month and a.year == b.year:
+        return f"{_MONTHS[a.month - 1]} {a.day} – {b.day}, {b.year}"
+    return f"{_MONTHS[a.month - 1]} {a.day} – {_MONTHS[b.month - 1]} {b.day}, {b.year}"
+
+
 @app.context_processor
 def _inject_user():
     """Make the current user/role, staff list and CSRF token available to

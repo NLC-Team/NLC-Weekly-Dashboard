@@ -8,12 +8,17 @@ current week; older events roll into the weekly <strong>archive</strong> below.<
 <div class="card mb-2">
   <div class="card-title">Archived weeks</div>
   {% if weeks %}
-  <p class="text-muted" style="font-size:12px;margin-bottom:10px">
-    Past weeks are preserved here (admin-only) and never deleted. Click a week to view it.</p>
-  <div class="chips">
+  <p class="text-muted" style="font-size:12px;margin-bottom:14px">
+    Past weeks are preserved here (admin-only) and never deleted. Week 1 is the
+    earliest on record; each card counts one week forward. Click a week to view it.</p>
+  <div class="weeks-grid">
     {% for w in weeks %}
-    <a class="chip" href="{{ url_for('audit_archive', week=w.week) }}"
-       title="{{ w.first_ts[:10] }} to {{ w.last_ts[:10] }}">{{ w.week }} ({{ w.count }})</a>
+    <a class="week-card" href="{{ url_for('audit_archive', week=w.week) }}">
+      <div class="week-card-num">Week {{ w.num }}</div>
+      <div class="week-card-span">{{ w.first_ts | audit_span(w.last_ts) }}</div>
+      <div class="week-card-meta">{{ w.count }} event{{ '' if w.count == 1 else 's' }}
+        · <span class="iso">{{ w.week }}</span></div>
+    </a>
     {% endfor %}
   </div>
   {% else %}
