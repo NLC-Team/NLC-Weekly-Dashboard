@@ -75,6 +75,16 @@ def test_import_accumulates_across_files(store):
 
 def test_import_stats(store):
     stats = store.upsert_items([_rec("id:1"), _rec("id:2")], date(2026, 6, 1))
-    assert stats == {"new": 2, "updated": 0}
+    assert stats["new"] == 2 and stats["updated"] == 0
+    assert sorted(stats["new_keys"]) == ["id:1", "id:2"]  # feeds import auto-complete
     store.record_import("file.csv", 10, 2, date(2026, 6, 1))
     assert store.last_import()["pending_count"] == 2
+
+
+def test_upsert_survives_duplicate_key_in_one_batch(store):
+    # A batch containing the same item_key twice must NOT raise a UNIQUE error;
+    # the second occurrence is treated as an update (regression for the import 500).
+    stats = store.upsert_items([_rec("dup"), _rec("dup"), _rec("id:x")], date(2026, 6, 1))
+    assert stats["new"] == 2          # 'dup' inserted once, 'id:x' once
+    assert stats["updated"] == 1      # the second 'dup' folded into an update
+    assert len(store.active_items()) == 2

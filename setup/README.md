@@ -8,6 +8,14 @@ website the whole firm can open." They must be run **on the host (`THE-HOST`)**.
 | `enable-team-access.ps1` | **Yes** | Opens the firewall for port 5000 (internal only) **and** installs the always-on service. Re-runnable. |
 | `verify-team-access.ps1` | No | Read-only health check; changes nothing. Run it to confirm everything is live. |
 
+## Weekly review (view / print / save — no email, no schedule)
+
+The dashboard's admin-only **Weekly Review** page shows the top-10 most overdue
+open returns firm-wide plus every staff member's overdue returns, always from live
+data. **Print / Save as PDF** opens a formatted PDF (generated fresh each time) in a
+new tab to print or save; **Download PDF** saves it directly. There is no emailing
+and no scheduled job — nothing to install here for it.
+
 ## How to apply (one elevated run)
 
 1. Log on to **`THE-HOST`** as an administrator (or have IT do it).

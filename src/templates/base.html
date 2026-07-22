@@ -45,6 +45,7 @@
   <a href="{{ url_for('person') }}"    class="{{ 'active' if request.endpoint == 'person' }}">Staff &#8211; Clients</a>
   <a href="{{ url_for('overdue') }}"   class="{{ 'active' if request.endpoint == 'overdue' }}">Overdue</a>
   {% if current_role == 'Admin' %}
+  <a href="{{ url_for('weekly_review') }}" class="{{ 'active' if request.endpoint in ('weekly_review','weekly_review_pdf') }}">Weekly Review</a>
   <a href="{{ url_for('staff') }}"     class="{{ 'active' if request.endpoint == 'staff' }}">Staff &amp; Roles
     {% if pending_count %}<span title="{{ pending_count }} access request(s) awaiting approval"
       style="display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;background:#dc2626;color:#fff;

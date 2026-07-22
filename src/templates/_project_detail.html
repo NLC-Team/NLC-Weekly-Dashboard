@@ -28,8 +28,6 @@
       <option {{ 'selected' if selected.return_type == rt }}>{{ rt }}</option>
       {% endfor %}
     </select>
-    <input type="text" name="custom_type" placeholder="or type a new one"
-           style="width:150px;font-size:12px;padding:6px 9px">
     <button type="submit" class="btn btn-secondary btn-sm">Save type</button>
   </form>
 
@@ -39,7 +37,7 @@
     <input type="hidden" name="filter" value="{{ filter_type }}">
     <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
     <button type="submit" class="btn {{ 'btn-secondary' if selected.completed else 'btn-primary' }}">
-      {{ 'Open client' if selected.completed else 'Close client' }}
+      {{ 'Open client' if selected.completed else 'Done' }}
     </button>
   </form>
 

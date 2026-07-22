@@ -132,6 +132,9 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
             raw = next((d.get("return_type_raw") for d in docs if d.get("return_type_raw")), None)
             rtype = normalize_return_type(raw)
         completed = bool(state.get("completed", False))
+        # Owner of the client (first non-empty across the return's docs) and when it
+        # was completed — used by the Weekly Review's "completed this week" section.
+        client_owner = next((d.get("client_owner") for d in docs if d.get("client_owner")), None)
 
         doc_rows = []
         received_count = 0
@@ -177,12 +180,14 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
                 "project_key": pkey,
                 "client": client,
                 "return_type": rtype,
+                "client_owner": client_owner,
                 "assignees": assignees,
                 "assignee_label": assignee_label,
                 "opened_on": opened_on,
                 "opened_year": opened_on.year if opened_on else None,
                 "opened_month": opened_on.month if opened_on else None,
                 "completed": completed,
+                "completed_at": state.get("completed_at"),
                 "open": not completed,
                 "documents": doc_rows,
                 "total_docs": len(doc_rows),

@@ -72,3 +72,21 @@ def test_distinct_statuses():
     m = importer.guess_mapping(list(_df().columns))
     recs = importer.apply_mapping(_df(), m)
     assert importer.distinct_statuses(recs) == ["In Progress", "Ready to Send", "Sent"]
+
+
+def test_duplicate_rows_get_distinct_keys_no_id():
+    # No ID column + two identical client/title/assignee rows (a "copied" client):
+    # both are kept, with distinct keys, so nothing is dropped and a batch insert
+    # can't collide. First occurrence keeps the bare hash key (back-compat).
+    df = pd.DataFrame({
+        "Client Name": ["Acme", "Acme", "Acme"],
+        "Work Title": ["1040", "1040", "1040"],
+        "Assignee": ["Sarah", "Sarah", "Sarah"],
+        "Status": ["In Progress", "In Progress", "In Progress"],
+    })
+    m = importer.guess_mapping(list(df.columns))
+    recs = importer.apply_mapping(df, m)
+    keys = [r["item_key"] for r in recs]
+    assert len(keys) == 3 and len(set(keys)) == 3          # all kept, all distinct
+    assert not keys[0].endswith("#2")                       # first keeps bare key
+    assert keys[1].endswith("#2") and keys[2].endswith("#3")

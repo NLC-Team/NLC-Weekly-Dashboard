@@ -8,10 +8,34 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 from pathlib import Path
 
 APP_NAME = "Karbon Pending Dashboard"
+
+# --- Hidden property line-items -------------------------------------------
+# One staff member (Property Assignee) tracks real-estate/property line
+# items whose client or title names a property ("16 Franklin Street", "104
+# Winding Way", "719 Tenant", ...). These are not tax statements and the firm
+# wants them hidden from the WHOLE dashboard — but ONLY under that assignee, so
+# the same words on anyone else's work are untouched. Matched as whole words,
+# case-insensitive, against the client name and the statement title.
+HIDDEN_ITEM_ASSIGNEE = "Property Assignee"
+_HIDDEN_ITEM_WORDS = ("street", "deerfield", "way", "place", "tenant")
+_HIDDEN_ITEM_RE = re.compile(r"\b(?:" + "|".join(_HIDDEN_ITEM_WORDS) + r")\b", re.IGNORECASE)
+
+
+def is_hidden_item(assignee, client, title) -> bool:
+    """True if this item should be hidden dashboard-wide: it belongs to
+    HIDDEN_ITEM_ASSIGNEE and its client/title names a property (see above)."""
+    if (assignee or "").strip().lower() != HIDDEN_ITEM_ASSIGNEE.lower():
+        return False
+    return bool(_HIDDEN_ITEM_RE.search(f"{client or ''} {title or ''}"))
+
+# The firm's display name, used as the heading of the weekly review (and anywhere
+# else the firm needs naming). Kept here so it changes in one place.
+FIRM_NAME = "NLC Financial"
 
 # Only email addresses on this domain may sign up / hold an account. Change this
 # one value if the firm's domain ever changes.

@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Weekly Review</h1>
+<p class="subtitle">
+  A live snapshot of the work most in need of finishing: the top {{ review.top_n }}
+  most overdue statements firm-wide, then every staff member's overdue statements
+  counted by return type. These match the <a href="{{ url_for('overdue') }}">Overdue</a>
+  view. This page always reflects the current data — it can change through the week. Use
+  <strong>Print / Save as PDF</strong> to open a print-ready copy that matches what
+  you see here.
+</p>
+
+<!-- Print / download controls -->
+<div class="card mb-2">
+  <div class="card-title">Print or save</div>
+  <p class="text-muted mb-1" style="font-size:12px">
+    Opens a formatted PDF of both sections (built from the current data) in a new tab,
+    where you can print it or save it. The PDF is generated fresh each time, so it's
+    always up to date.
+  </p>
+  <div class="row" style="gap:8px">
+    <a href="{{ url_for('weekly_review_pdf') }}" target="_blank" rel="noopener"
+       class="btn btn-primary">Print / Save as PDF</a>
+    <a href="{{ url_for('weekly_review_pdf', download=1) }}" class="btn btn-secondary">Download PDF</a>
+  </div>
+</div>
+
+<!-- Completed this week (top of the report) -->
+<div class="card mb-2">
+  <div class="card-title">Completed this week
+    <span class="text-muted" style="font-weight:400;font-size:13px">(since {{ review.week_start }} — resets each Sunday)</span>
+  </div>
+  {% if review.completed_this_week %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Client</th>
+          <th>Return type</th>
+          <th>Employee</th>
+          <th>Completed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in review.completed_this_week %}
+        <tr>
+          <td style="font-weight:600">{{ r.client }}</td>
+          <td class="text-muted">{{ r.return_type }}</td>
+          <td class="text-muted">{{ r.assignee }}</td>
+          <td style="font-weight:700;color:var(--ok)">{{ r.completed_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-muted" style="font-size:13px">No returns marked completed yet this week.</p>
+  {% endif %}
+</div>
+
+<!-- Top N most overdue statements -->
+<div class="card mb-2">
+  <div class="card-title">Top {{ review.top_n }} most overdue statements
+    <span class="text-muted" style="font-weight:400;font-size:13px">({{ review.total_overdue }} overdue firm-wide)</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:36px">#</th>
+          <th>Client</th>
+          <th>Document / work</th>
+          <th>Employee</th>
+          <th>Days overdue</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in review.top %}
+        <tr>
+          <td style="font-weight:700;color:var(--navy)">{{ r.rank }}</td>
+          <td style="font-weight:600">{{ r.client }}</td>
+          <td class="text-muted">{{ r.title }}</td>
+          <td class="text-muted">{{ r.assignee }}</td>
+          <td style="font-weight:700">{{ r.days_overdue }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">
+          Nothing overdue — every statement is on track.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Per staff: a statements table (same format as the Top 10, minus the employee
+     column) with that person's counts by return type underneath. -->
+<div class="card">
+  <div class="card-title">Overdue statements by staff member</div>
+  {% for staff in review.per_staff %}
+  <div style="margin-bottom:26px">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">
+      <div style="font-size:15px;font-weight:700;color:var(--navy)">{{ staff.assignee }}</div>
+      <div style="white-space:nowrap"><span style="font-size:24px;font-weight:800;color:var(--navy)">{{ staff.count }}</span> <span class="text-muted" style="font-size:12px">overdue</span></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:36px">#</th>
+            <th>Client</th>
+            <th>Document / work</th>
+            <th>Days overdue</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in staff.statements %}
+          <tr>
+            <td style="font-weight:700;color:var(--navy)">{{ r.rank }}</td>
+            <td style="font-weight:600">{{ r.client }}</td>
+            <td class="text-muted">{{ r.title }}</td>
+            <td style="font-weight:700">{{ r.days_overdue }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:8px">
+      <div class="text-muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Total by return type</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px 16px;font-size:13px">
+        {% for t in staff.types %}
+        <span style="white-space:nowrap">{{ t.type }} <strong style="color:var(--navy)">{{ t.count }}</strong></span>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <p class="text-muted" style="font-size:13px">No staff member has an overdue statement right now.</p>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -22,11 +22,12 @@
 <!-- Step 3: result -->
 <div class="card">
   <div class="card-title text-ok">&#10003; Import complete</div>
-  <div style="display:grid;grid-template-columns:repeat(4,auto);gap:24px;margin-bottom:16px">
-    <div><div class="kpi-value text-accent" style="font-size:24px">{{ result.rows }}</div><div class="kpi-label">Total rows</div></div>
-    <div><div class="kpi-value text-accent" style="font-size:24px">{{ result.pending }}</div><div class="kpi-label">Pending found</div></div>
+  <div style="display:grid;grid-template-columns:repeat(5,auto);gap:24px;margin-bottom:16px">
+    <div><div class="kpi-value text-accent" style="font-size:24px">{{ result.imported if result.imported is defined else result.rows }}</div><div class="kpi-label">Rows imported</div></div>
     <div><div class="kpi-value text-ok" style="font-size:24px">{{ result.new }}</div><div class="kpi-label">New items added</div></div>
     <div><div class="kpi-value" style="font-size:24px;color:var(--muted)">{{ result.updated }}</div><div class="kpi-label">Existing updated</div></div>
+    <div><div class="kpi-value text-ok" style="font-size:24px">{{ result.auto_completed or 0 }}</div><div class="kpi-label">Marked completed</div></div>
+    <div><div class="kpi-value" style="font-size:24px;color:var(--muted)">{{ result.reopened or 0 }}</div><div class="kpi-label">Reopened</div></div>
   </div>
   <a href="{{ url_for('overview') }}" class="btn btn-primary">Go to Overview</a>
 </div>
@@ -59,13 +60,21 @@
 
     {% if ctx.all_statuses %}
     <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px">
-      <p style="font-size:12px;font-weight:700;margin-bottom:6px">Which statuses are "pending"?</p>
-      <p class="text-muted mb-1" style="font-size:11px">Check every status that means a document is still waiting. Leave all unchecked to treat every row as pending.</p>
+      <p class="text-muted mb-1" style="font-size:11px">
+        Every row in the file is imported — nothing is filtered out.
+      </p>
+      <p style="font-size:12px;font-weight:700;margin-bottom:6px">Which statuses mean "completed" (done)?</p>
+      <p class="text-muted mb-1" style="font-size:11px">
+        Check the statuses that mean a return is finished. A client whose documents are
+        <strong>all</strong> in one of these is imported and moved straight to the
+        <strong>Done</strong> tab. Leave unchecked if this file has no completed work.
+      </p>
       <div style="display:flex;flex-wrap:wrap;gap:8px 20px;margin-bottom:14px">
         {% for s in ctx.all_statuses %}
         <label style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer">
-          <input type="checkbox" name="pending_status" value="{{ s }}"
-                 style="width:15px;height:15px;accent-color:var(--accent)">
+          <input type="checkbox" name="completed_status" value="{{ s }}"
+                 {{ 'checked' if s in completed_saved }}
+                 style="width:15px;height:15px;accent-color:var(--ok)">
           {{ s }}
         </label>
         {% endfor %}

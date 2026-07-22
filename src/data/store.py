@@ -112,6 +112,10 @@ _MIGRATIONS = {
               # Bumped whenever credentials change; sessions carry the value
               # they were issued with and die when it no longer matches.
               ("session_rev", "INTEGER DEFAULT 0")],
+    # 'manual' (set via the Done/Open button) or 'import' (set by the import
+    # auto-complete sync). Lets the sync leave human decisions alone. See
+    # apply_import_completion / set_project_completed.
+    "project_state": [("completed_source", "TEXT")],
 }
 
 
@@ -283,11 +287,17 @@ class Store:
 
             inserts: list[tuple] = []
             updates: list[tuple] = []
+            # Guard against a key appearing twice in ONE batch (e.g. duplicate rows
+            # in the export): the second occurrence becomes an UPDATE, never a second
+            # INSERT — so executemany can't hit a UNIQUE collision. apply_mapping
+            # already disambiguates dup keys, but this keeps the store safe on its own.
+            batch_new: set[str] = set()
             for rec in pending_records:
                 # Empty owner -> NULL so a re-import without the column mapped keeps
                 # any owner already on file (see COALESCE in the UPDATE below).
                 client_owner = (rec.get("client_owner") or "").strip() or None
-                if rec["item_key"] not in existing:
+                if rec["item_key"] not in existing and rec["item_key"] not in batch_new:
+                    batch_new.add(rec["item_key"])
                     # first_seen uses the real source date when available, else today.
                     first_seen = _iso(rec.get("source_date")) or iso
                     inserts.append((
@@ -323,7 +333,10 @@ class Store:
             # (still active), so a new or partial file never wipes prior data.
             self.conn.commit()
             self._bump()
-            return {"new": len(inserts), "updated": len(updates)}
+            # `new_keys` lets the import auto-complete sync tell which documents
+            # are brand-new (so new work can reopen a hand-completed client).
+            return {"new": len(inserts), "updated": len(updates),
+                    "new_keys": [i[0] for i in inserts]}
 
     def active_items(self) -> list[dict]:
         """Current pending items (latest import, not resolved), with history.
@@ -401,12 +414,18 @@ class Store:
 
     # ---- project state (return type + completion) ----------------------
     def get_project_states(self) -> dict:
-        """Map of project_key -> {return_type, completed}."""
+        """Map of project_key -> {return_type, completed, completed_at, completed_source}."""
         rows = self.conn.execute(
-            "SELECT project_key, return_type, completed FROM project_state"
+            "SELECT project_key, return_type, completed, completed_at, completed_source "
+            "FROM project_state"
         ).fetchall()
         return {
-            r["project_key"]: {"return_type": r["return_type"], "completed": bool(r["completed"])}
+            r["project_key"]: {
+                "return_type": r["return_type"],
+                "completed": bool(r["completed"]),
+                "completed_at": r["completed_at"],
+                "completed_source": r["completed_source"],
+            }
             for r in rows
         }
 
@@ -419,15 +438,94 @@ class Store:
         self.conn.commit()
         self._bump()
 
-    def set_project_completed(self, project_key: str, completed: bool, today: date) -> None:
+    def set_project_completed(self, project_key: str, completed: bool, today: date,
+                              source: str = "manual") -> None:
+        """Set a return's completed flag. `source` records who set it — 'manual'
+        (the Done/Open button, the default) or 'import' (the auto-complete sync) —
+        so the sync can leave hand-made decisions alone (see apply_import_completion)."""
         self.conn.execute(
-            "INSERT INTO project_state(project_key, completed, completed_at) VALUES(?, ?, ?) "
+            "INSERT INTO project_state(project_key, completed, completed_at, completed_source) "
+            "VALUES(?, ?, ?, ?) "
             "ON CONFLICT(project_key) DO UPDATE SET completed=excluded.completed, "
-            "completed_at=excluded.completed_at",
-            (project_key, 1 if completed else 0, today.isoformat() if completed else None),
+            "completed_at=excluded.completed_at, completed_source=excluded.completed_source",
+            (project_key, 1 if completed else 0,
+             today.isoformat() if completed else None, source),
         )
         self.conn.commit()
         self._bump()
+
+    def apply_import_completion(self, completed_statuses, new_keys, today: date) -> dict:
+        """Auto-complete / reopen returns from the just-imported statuses.
+
+        Rules (see the feature design):
+          - A return auto-completes when ALL its active documents carry a status
+            in `completed_statuses`. It's stamped completed_at=today, source='import'.
+          - Kept in sync: an import that leaves any active document NOT completed
+            reopens a return that the import had completed.
+          - Manual completions (Done button, source='manual') are left alone —
+            EXCEPT they're reopened when this import ADDS a new active (non-completed)
+            document to that client (new work arrived; it's not finished after all).
+
+        `new_keys` = item_keys inserted by this import (from upsert_items). Returns
+        {completed, reopened} counts. No-op when no completed statuses are configured.
+        """
+        wanted = {s.strip().lower() for s in (completed_statuses or [])}
+        if not wanted:
+            return {"completed": 0, "reopened": 0}
+        new_keys = set(new_keys or [])
+
+        def _done(status) -> bool:
+            return (status or "").strip().lower() in wanted
+
+        with self._write_lock:
+            rows = self.conn.execute(
+                "SELECT item_key, last_status, project_key, client FROM items WHERE resolved=0"
+            ).fetchall()
+            by_pkey: dict[str, list] = {}
+            for r in rows:
+                pkey = r["project_key"] or ("c:" + (r["client"] or "").strip().lower())
+                by_pkey.setdefault(pkey, []).append(r)
+
+            states = {
+                r["project_key"]: r for r in self.conn.execute(
+                    "SELECT project_key, completed, completed_source FROM project_state"
+                ).fetchall()
+            }
+
+            def _write(pkey, completed, source):
+                self.conn.execute(
+                    "INSERT INTO project_state(project_key, completed, completed_at, "
+                    "completed_source) VALUES(?, ?, ?, ?) "
+                    "ON CONFLICT(project_key) DO UPDATE SET completed=excluded.completed, "
+                    "completed_at=excluded.completed_at, completed_source=excluded.completed_source",
+                    (pkey, completed, today.isoformat() if completed else None, source),
+                )
+
+            completed_n = reopened_n = 0
+            for pkey, docs in by_pkey.items():
+                all_done = bool(docs) and all(_done(d["last_status"]) for d in docs)
+                has_new_active = any(
+                    d["item_key"] in new_keys and not _done(d["last_status"]) for d in docs
+                )
+                st = states.get(pkey)
+                completed = bool(st["completed"]) if st else False
+                source = (st["completed_source"] if st else None)
+
+                if completed and source == "manual":
+                    if has_new_active:               # new work on a hand-completed client
+                        _write(pkey, 0, None)
+                        reopened_n += 1
+                elif all_done:
+                    if not completed:
+                        _write(pkey, 1, "import")
+                        completed_n += 1
+                elif completed and source != "manual":  # import had completed it; no longer all done
+                    _write(pkey, 0, None)
+                    reopened_n += 1
+
+            self.conn.commit()
+            self._bump()
+            return {"completed": completed_n, "reopened": reopened_n}
 
     # ---- staff directory + login accounts ------------------------------
     def get_staff(self) -> list[dict]:

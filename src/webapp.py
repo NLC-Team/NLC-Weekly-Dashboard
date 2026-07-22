@@ -35,7 +35,7 @@ import matplotlib
 matplotlib.use("Agg")
 # Chart font: Times New Roman for a classic, professional look.
 matplotlib.rcParams["font.family"] = ["Times New Roman", "Times", "serif"]
-from flask import (Flask, abort, g, redirect, render_template, request,
+from flask import (Flask, Response, abort, g, redirect, render_template, request,
                    send_from_directory, session, url_for)
 from matplotlib.figure import Figure
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -43,8 +43,9 @@ from werkzeug.security import check_password_hash, generate_password_hash
 import cloudflare_hardening
 import config
 import mailer
+import review_pdf
 import vault
-from data import importer, service
+from data import importer, review, service
 from data.store import Store
 
 app = Flask(__name__)
@@ -88,6 +89,12 @@ def _overdue_days() -> int:
 
 def _pending_statuses() -> list:
     return list(get_store().get_setting("pending_statuses", []))
+
+
+def _completed_statuses() -> list:
+    """Statuses that mean a return is finished. On import, a return whose active
+    documents are ALL in one of these is auto-moved to the Completed tab."""
+    return list(get_store().get_setting("completed_statuses", []))
 
 
 # ---- Identity (driven by the logged-in session user) ---------------------
@@ -1497,8 +1504,8 @@ def settings():
     mc = _mail_config()
     return render_template("settings.html",
                            overdue_days=_overdue_days(),
-                           pending_statuses=_pending_statuses(),
-                           status_groups=_group_statuses(_known_statuses()),
+                           completed_statuses=_completed_statuses(),
+                           all_statuses=_known_statuses(),
                            db_path=str(get_store().db_path),
                            mail={"host": mc["host"], "port": mc["port"], "sender": mc["sender"],
                                  "username": mc["username"], "use_tls": mc["use_tls"],
@@ -1560,13 +1567,48 @@ def settings_days():
     return redirect(url_for("settings", msg=f"Overdue threshold set to {days} days."))
 
 
-@app.route("/settings/statuses", methods=["POST"])
+@app.route("/settings/completed-statuses", methods=["POST"])
 @admin_required
-def settings_statuses():
-    statuses = request.form.getlist("statuses")
-    get_store().set_setting("pending_statuses", statuses)
-    _audit("settings_changed", f"pending_statuses ({len(statuses)} selected)")
-    return redirect(url_for("settings", msg="Pending statuses saved."))
+def settings_completed_statuses():
+    statuses = request.form.getlist("completed_statuses")
+    get_store().set_setting("completed_statuses", statuses)
+    _audit("settings_changed", f"completed_statuses ({len(statuses)} selected)")
+    return redirect(url_for("settings",
+                            msg="Completed statuses saved. Returns whose documents are all "
+                                "in one of these will move to Done on the next import."))
+
+
+# ---- Weekly review -------------------------------------------------------
+# A firm-wide "what to finish this week" snapshot: the top-10 most overdue open
+# returns, then every staff member's overdue returns. It reflects the live data
+# at the moment you open it. There is no emailing/scheduling — an admin views it
+# on screen and prints (or saves) the PDF on demand; /review.pdf renders the same
+# report build_current_review() shows, so the printout matches the page exactly.
+
+def build_current_review() -> dict:
+    """The weekly review for right now, from the same cached dashboard data the
+    rest of the app reads."""
+    return review.build_review(_get_data(), config.FIRM_NAME, datetime.now())
+
+
+@app.route("/review")
+@admin_required
+def weekly_review():
+    return render_template("review.html", review=build_current_review())
+
+
+@app.route("/review.pdf")
+@admin_required
+def weekly_review_pdf():
+    """The current review as a printable PDF, generated on demand from live data.
+
+    Served INLINE by default so clicking opens it in the browser's PDF viewer,
+    where the admin can print or save. `?download=1` forces a file download."""
+    pdf = review_pdf.render_pdf(build_current_review())
+    fname = f"weekly-review-{date.today().isoformat()}.pdf"
+    disposition = "attachment" if request.args.get("download") else "inline"
+    return Response(pdf, mimetype="application/pdf",
+                    headers={"Content-Disposition": f'{disposition}; filename="{fname}"'})
 
 
 # ---- Import flow ---------------------------------------------------------
@@ -1579,7 +1621,8 @@ def import_view():
     result = session.pop("import_result", None)
     return render_template("import.html", step=step, ctx=ctx,
                            result=result,
-                           logical_fields=config.LOGICAL_FIELDS)
+                           logical_fields=config.LOGICAL_FIELDS,
+                           completed_saved=_completed_statuses())
 
 
 @app.route("/import/upload", methods=["POST"])
@@ -1655,14 +1698,14 @@ def import_run():
         if col:
             mapping[field] = col
 
-    statuses = request.form.getlist("pending_status")
-    if statuses:
-        get_store().set_setting("pending_statuses", statuses)
+    # No status filtering on import (every row is stored). We only remember which
+    # statuses mean "completed" so finished returns land in the Done tab.
+    completed = request.form.getlist("completed_status")
+    get_store().set_setting("completed_statuses", completed)
 
     stats = service.import_csv(
-        get_store(), tmp_path, mapping,
-        get_store().get_setting("pending_statuses", []),
-        date.today(),
+        get_store(), tmp_path, mapping, [], date.today(),
+        completed_statuses=completed,
     )
     get_store().save_mapping(ctx.get("sig", ""), mapping, date.today())
     _audit("import_run", f"{ctx.get('filename', '?')}: {stats.get('new', 0)} new, "

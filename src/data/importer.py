@@ -103,31 +103,59 @@ def parse_date(value: str) -> date | None:
 
 
 def apply_mapping(df: pd.DataFrame, mapping: dict) -> list[dict]:
-    """Turn raw rows into normalised records using the column mapping."""
+    """Turn raw rows into normalised records using the column mapping.
+
+    Optimised for large files: each mapped column is pulled once as a Python list
+    and the date column is parsed in a single vectorised pass (per-row
+    pd.to_datetime is ~100x slower). Duplicate item_keys within one file — common
+    when there's no unique-ID column and two rows share client+title+assignee —
+    are disambiguated with a #N suffix so NO rows are lost and a batch insert can't
+    hit a UNIQUE collision. The first occurrence keeps the bare key, so previously
+    imported single rows keep the same key.
+    """
+    n = len(df)
+
+    def col_list(field):
+        c = mapping.get(field)
+        if c and c in df.columns:
+            return [_norm(v) for v in df[c].tolist()]
+        return [""] * n
+
+    assignee = col_list("assignee")
+    client = col_list("client")
+    client_owner = col_list("client_owner")
+    title = col_list("title")
+    status = col_list("status")
+    return_type = col_list("return_type")
+    project = col_list("project")
+    item_id = col_list("item_id")
+
+    # Vectorised date parse: one pass over the whole column, not one call per cell.
+    date_col = mapping.get("date")
+    if date_col and date_col in df.columns:
+        ds = pd.to_datetime(df[date_col], errors="coerce", dayfirst=False)
+        source_dates = [None if pd.isna(t) else t.date() for t in ds]
+    else:
+        source_dates = [None] * n
+
     records = []
-    for _, row in df.iterrows():
-
-        def get(field):
-            col = mapping.get(field)
-            return _norm(row[col]) if col and col in df.columns else ""
-
+    seen: dict[str, int] = {}
+    for i in range(n):
         rec = {
-            "assignee": get("assignee") or "(unassigned)",
-            "client": get("client"),
-            "client_owner": get("client_owner"),
-            "title": get("title"),
-            "status": get("status"),
-            "source_date": parse_date(get("date")),
-            "return_type_raw": get("return_type"),
+            "assignee": assignee[i] or "(unassigned)",
+            "client": client[i],
+            "client_owner": client_owner[i],
+            "title": title[i],
+            "status": status[i],
+            "source_date": source_dates[i],
+            "return_type_raw": return_type[i],
         }
-        # Documents group into a project: an explicit project/return column if
-        # mapped, otherwise one project per client.
-        proj = get("project")
-        if proj:
-            rec["project_key"] = "p:" + proj.strip().lower()
-        else:
-            rec["project_key"] = "c:" + rec["client"].strip().lower()
-        rec["item_key"] = _make_key(rec, get("item_id"))
+        rec["project_key"] = ("p:" + project[i].strip().lower() if project[i]
+                              else "c:" + client[i].strip().lower())
+        base = _make_key(rec, item_id[i])
+        cnt = seen.get(base, 0)
+        seen[base] = cnt + 1
+        rec["item_key"] = base if cnt == 0 else f"{base}#{cnt + 1}"
         records.append(rec)
     return records
 
