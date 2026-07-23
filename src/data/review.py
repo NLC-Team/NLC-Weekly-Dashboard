@@ -32,11 +32,22 @@ from config import normalize_return_type
 OWNER_PREFIX = "Owen"
 EXCLUDE_STATUS_SUBSTR = "no correspondence"
 
+# Bogus / non-human assignees that must never appear in the review — e.g. Karbon's
+# own "Karbon Support" system account, which is not a real staff member. Matched on
+# the normalized name, lower-cased; add here if more system accounts turn up.
+EXCLUDE_ASSIGNEES = {"karbon support"}
+
+
+def _is_excluded_assignee(name) -> bool:
+    return _norm_assignee(name).lower() in EXCLUDE_ASSIGNEES
+
 
 def _in_scope(it: dict) -> bool:
     owner = (it.get("client_owner") or "").strip().lower()
     status = (it.get("status") or "").lower()
-    return owner.startswith(OWNER_PREFIX) and EXCLUDE_STATUS_SUBSTR not in status
+    return (owner.startswith(OWNER_PREFIX)
+            and EXCLUDE_STATUS_SUBSTR not in status
+            and not _is_excluded_assignee(it.get("assignee")))
 
 
 def _week_start_sunday(d: date) -> date:
@@ -63,6 +74,82 @@ def _item_type(it: dict) -> str:
     to the project's effective type; fall back to the raw CSV value for callers
     (tests) that hand us bare enriched items."""
     return it.get("return_type") or normalize_return_type(it.get("return_type_raw"))
+
+
+def _opened_iso(it: dict) -> str:
+    """When a statement 'opened' — the CSV date if present, else when first seen —
+    as an ISO date string ('' if neither), mirroring analytics.item_age_days."""
+    op = it.get("source_date") or it.get("first_seen")
+    if hasattr(op, "isoformat"):
+        return op.isoformat()
+    return str(op)[:10] if op else ""
+
+
+def _stmt_row(it: dict, rank: int) -> dict:
+    """One row for a statements table (firm Top-N, per-staff Top-10, recent-10)."""
+    return {
+        "rank": rank,
+        "client": it.get("client", ""),
+        "title": it.get("title", ""),
+        "return_type": _item_type(it),
+        "days_overdue": it.get("days_overdue", 0),
+        "days_open": it.get("age_days", 0),
+        "assignee": _norm_assignee(it.get("assignee")),
+        "opened": _opened_iso(it),
+    }
+
+
+def _types_list(counter) -> list:
+    """A Counter of {type: n} as [{type, count}, ...], most common first, ties
+    broken alphabetically so the order is stable across renders."""
+    return [{"type": t, "count": c}
+            for t, c in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0].lower()))]
+
+
+def _staff_project_stats(data: dict, week_start: date) -> dict:
+    """Per-staff PROJECT-level tallies over the Owen-owned projects, attributing
+    each project to every staff member who works it (a project's `assignees`).
+
+    Returns name -> {overdue, open, completed_week, overdue_by_type: Counter,
+    open_by_type: Counter}. Project-level (not statement-level) because the staff
+    page and the main-page summary count returns, not individual documents:
+    'open projects by work type', 'overdue projects', 'completed this week'.
+    """
+    stats: dict[str, dict] = {}
+
+    def bucket(name: str) -> dict:
+        return stats.setdefault(name, {
+            "overdue": 0, "open": 0, "completed_week": 0,
+            "overdue_by_type": Counter(), "open_by_type": Counter(),
+        })
+
+    for p in data.get("projects", []):
+        if not _owner_in_scope(p.get("client_owner")):
+            continue
+        rtype = p.get("return_type") or "Unclassified"
+        names = {_norm_assignee(a) for a in (p.get("assignees") or [])} or {"Unassigned"}
+        names = {n for n in names if n.lower() not in EXCLUDE_ASSIGNEES}
+        if not names:          # worked only by an excluded system account — drop it
+            continue
+        is_overdue = bool(p.get("overdue"))
+        is_open = bool(p.get("open"))
+        done_this_week = False
+        if p.get("completed") and p.get("completed_at"):
+            try:
+                done_this_week = date.fromisoformat(str(p["completed_at"])[:10]) >= week_start
+            except (ValueError, TypeError):
+                done_this_week = False
+        for name in names:
+            b = bucket(name)
+            if is_overdue:
+                b["overdue"] += 1
+                b["overdue_by_type"][rtype] += 1
+            if is_open:
+                b["open"] += 1
+                b["open_by_type"][rtype] += 1
+            if done_this_week:
+                b["completed_week"] += 1
+    return stats
 
 
 def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
@@ -95,6 +182,10 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
             continue
         if not _owner_in_scope(p.get("client_owner")):
             continue
+        # Drop returns worked ONLY by an excluded system account (Karbon Support).
+        real_assignees = [a for a in (p.get("assignees") or []) if not _is_excluded_assignee(a)]
+        if p.get("assignees") and not real_assignees:
+            continue
         try:
             cad = date.fromisoformat(str(p["completed_at"])[:10])
         except (ValueError, TypeError):
@@ -112,21 +203,19 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
                      key=lambda it: (it.get("days_overdue", 0), it.get("age_days", 0)),
                      reverse=True)
 
-    def _row(it: dict, rank: int) -> dict:
-        return {
-            "rank": rank,
-            "client": it.get("client", ""),
-            "title": it.get("title", ""),
-            "return_type": _item_type(it),
-            "days_overdue": it.get("days_overdue", 0),
-            "days_open": it.get("age_days", 0),
-            "assignee": _norm_assignee(it.get("assignee")),
-        }
+    top = [_stmt_row(it, i + 1) for i, it in enumerate(overdue[:top_n])]
 
-    top = [_row(it, i + 1) for i, it in enumerate(overdue[:top_n])]
+    # Firm-wide "most recent" — the newest-OPENED in-scope statements, newest first
+    # (blank open-dates sort last). Feeds the firm-wide page after the last staff
+    # member; recomputed live each view, so it tracks the latest imported work.
+    recent_items = sorted((it for it in data.get("items", []) if _in_scope(it)),
+                          key=lambda it: (_opened_iso(it) or "", it.get("age_days", 0)),
+                          reverse=True)
+    recent = [_stmt_row(it, i + 1) for i, it in enumerate(recent_items[:top_n])]
 
-    # Per staff: the full list of their overdue statements (worst first) AND a
-    # count of those statements by return type.
+    # Per staff (STATEMENT level): the full list of their overdue statements
+    # (worst first) AND a count of those statements by return type. Kept for the
+    # printable PDF (review_pdf.py), which still lays out the detailed tables.
     by_staff: dict[str, list] = {}
     for it in overdue:
         by_staff.setdefault(_norm_assignee(it.get("assignee")), []).append(it)
@@ -135,18 +224,36 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
     for who, items in by_staff.items():
         counter = Counter(_item_type(it) for it in items)
         # Only the worst `per_staff_limit` are listed; count/types below cover all.
-        statements = [_row(it, i + 1) for i, it in enumerate(items[:per_staff_limit])]
+        statements = [_stmt_row(it, i + 1) for i, it in enumerate(items[:per_staff_limit])]
         per_staff.append({
             "assignee": who,
             "count": len(items),
             "statements": statements,
-            # Most common type first; ties broken alphabetically for a stable order.
-            "types": [{"type": t, "count": c}
-                      for t, c in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0].lower()))],
+            "types": _types_list(counter),
         })
     # Busiest first, then name; Unassigned always last so it never leads.
     per_staff.sort(key=lambda s: (s["assignee"] == "Unassigned",
                                   -s["count"], s["assignee"].lower()))
+
+    # Per staff (PROJECT level): the three-point summary the main page shows —
+    # staff name, their overdue-return total, and that total broken out by type.
+    # Each staff row links to their own detail page (see build_staff_page). A
+    # staff member appears if they have ANY Owen-owned open/overdue/just-completed
+    # work this week, so every relevant person gets a row and a page.
+    pstats = _staff_project_stats(data, week_start)
+    staff_rows = []
+    for name, b in pstats.items():
+        if not (b["overdue"] or b["open"] or b["completed_week"]):
+            continue
+        staff_rows.append({
+            "assignee": name,
+            "overdue": b["overdue"],
+            "open": b["open"],
+            "completed_week": b["completed_week"],
+            "overdue_by_type": _types_list(b["overdue_by_type"]),
+        })
+    staff_rows.sort(key=lambda s: (s["assignee"] == "Unassigned",
+                                   -s["overdue"], -s["open"], s["assignee"].lower()))
 
     return {
         "firm_name": firm_name,
@@ -155,6 +262,59 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
         "week_start": week_start.isoformat(),
         "completed_this_week": completed_week,
         "top": top,
+        "recent": recent,
         "per_staff": per_staff,
+        "staff_rows": staff_rows,
         "total_overdue": len(overdue),
+    }
+
+
+def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
+                     top_n: int = 10, recent_n: int = 10) -> dict:
+    """One staff member's detail page for the weekly review (Owen-owned scope).
+
+    Project-level headline tiles (completed this week / open / overdue, plus open
+    broken out by work type) come from _staff_project_stats — the SAME tallies the
+    main page's summary row uses, so a staff member's numbers match between the two.
+    The two statement-level lists give the detail: their Top-N most overdue
+    statements (worst first) and their most recently opened statements (newest
+    first). Returns a dict ready for review_staff.html.
+    """
+    gen_date = generated_at.date() if hasattr(generated_at, "date") else generated_at
+    week_start = _week_start_sunday(gen_date)
+    who = _norm_assignee(staff_name)
+
+    b = _staff_project_stats(data, week_start).get(who, {
+        "overdue": 0, "open": 0, "completed_week": 0,
+        "overdue_by_type": Counter(), "open_by_type": Counter(),
+    })
+
+    def _mine(it: dict) -> bool:
+        return _in_scope(it) and _norm_assignee(it.get("assignee")) == who
+
+    overdue = sorted((it for it in data.get("overdue", []) if _mine(it)),
+                     key=lambda it: (it.get("days_overdue", 0), it.get("age_days", 0)),
+                     reverse=True)
+    top_overdue = [_stmt_row(it, i + 1) for i, it in enumerate(overdue[:top_n])]
+
+    # Most recent = newest OPENED across all their in-scope statements (not just
+    # overdue ones); blank open-dates sort last so they never lead.
+    recent_items = sorted((it for it in data.get("items", []) if _mine(it)),
+                          key=lambda it: (_opened_iso(it) or "", it.get("age_days", 0)),
+                          reverse=True)
+    recent = [_stmt_row(it, i + 1) for i, it in enumerate(recent_items[:recent_n])]
+
+    return {
+        "firm_name": firm_name,
+        "generated_at": generated_at,
+        "week_start": week_start.isoformat(),
+        "staff": who,
+        "found": bool(b["overdue"] or b["open"] or b["completed_week"] or recent_items),
+        "completed_week": b["completed_week"],
+        "open": b["open"],
+        "open_by_type": _types_list(b["open_by_type"]),
+        "overdue": b["overdue"],
+        "overdue_by_type": _types_list(b["overdue_by_type"]),
+        "top_overdue": top_overdue,
+        "recent": recent,
     }

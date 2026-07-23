@@ -81,7 +81,7 @@
     <a class="chip {{ 'active' if show_done }}"
        href="{{ url_for('projects', filter='All', done=('0' if show_done else '1')) }}"
        style="margin-left:8px">
-      {% if show_done %}&#10003; Showing done ({{ display|length }}) — click to exit{% else %}Show done{% endif %}
+      {% if show_done %}&#10003; Showing done ({{ display|length }}) — click to exit{% else %}Show done ({{ totals.completed_total }}){% endif %}
     </a>
     {% endif %}
   </div>

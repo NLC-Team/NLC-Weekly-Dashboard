@@ -2,12 +2,12 @@
 {% block content %}
 <h1>Weekly Review</h1>
 <p class="subtitle">
-  A live snapshot of the work most in need of finishing: the top {{ review.top_n }}
-  most overdue statements firm-wide, then every staff member's overdue statements
-  counted by return type. These match the <a href="{{ url_for('overdue') }}">Overdue</a>
-  view. This page always reflects the current data — it can change through the week. Use
-  <strong>Print / Save as PDF</strong> to open a print-ready copy that matches what
-  you see here.
+  A live snapshot of the work most in need of finishing: what was completed this week,
+  then every staff member with their overdue total and a breakdown of those returns.
+  <strong>Click a staff member</strong> to open their own page — completed, open and
+  overdue returns, their top 10 most overdue statements, and their 10 most recent. These
+  match the <a href="{{ url_for('overdue') }}">Overdue</a> view and always reflect the
+  current data. Use <strong>Print / Save as PDF</strong> for a print-ready copy.
 </p>
 
 <!-- Print / download controls -->
@@ -25,10 +25,14 @@
   </div>
 </div>
 
-<!-- Completed this week (top of the report) -->
+<!-- Completed this week (top of the report). Capped to the 15 most recent so a
+     big week (or a bulk status backfill) can't bury the staff summary below;
+     the header carries the true total and a "+N more" footer notes the rest. -->
+{% set done_total = review.completed_this_week|length %}
+{% set done_cap = 30 %}
 <div class="card mb-2">
   <div class="card-title">Completed this week
-    <span class="text-muted" style="font-weight:400;font-size:13px">(since {{ review.week_start }} — resets each Sunday)</span>
+    <span class="text-muted" style="font-weight:400;font-size:13px">({{ done_total }} since {{ review.week_start }} — resets each Sunday)</span>
   </div>
   {% if review.completed_this_week %}
   <div class="table-wrap">
@@ -42,7 +46,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for r in review.completed_this_week %}
+        {% for r in review.completed_this_week[:done_cap] %}
         <tr>
           <td style="font-weight:600">{{ r.client }}</td>
           <td class="text-muted">{{ r.return_type }}</td>
@@ -53,89 +57,129 @@
       </tbody>
     </table>
   </div>
+  {% if done_total > done_cap %}
+  <p class="text-muted" style="font-size:12.5px;margin-top:10px">
+    Showing the {{ done_cap }} most recent · <strong>+{{ done_total - done_cap }} more</strong> completed this week.
+  </p>
+  {% endif %}
   {% else %}
   <p class="text-muted" style="font-size:13px">No returns marked completed yet this week.</p>
   {% endif %}
 </div>
 
-<!-- Top N most overdue statements -->
+<!-- Per staff: an identity block (name + overdue total) and their type chips -->
 <div class="card mb-2">
-  <div class="card-title">Top {{ review.top_n }} most overdue statements
-    <span class="text-muted" style="font-weight:400;font-size:13px">({{ review.total_overdue }} overdue firm-wide)</span>
+  <div class="card-title">Overdue by staff member
+    <span class="text-muted" style="font-weight:400;font-size:13px">({{ review.total_overdue }} overdue statements firm-wide · click a name for their page)</span>
   </div>
   <div class="table-wrap">
-    <table>
+    <table class="staff-summary">
       <thead>
         <tr>
-          <th style="width:36px">#</th>
-          <th>Client</th>
-          <th>Document / work</th>
-          <th>Employee</th>
-          <th>Days overdue</th>
+          <th>Staff member</th>
+          <th style="width:104px;text-align:right">Overdue</th>
+          <th>Returns</th>
         </tr>
       </thead>
       <tbody>
-        {% for r in review.top %}
+        {% for s in review.staff_rows %}
         <tr>
-          <td style="font-weight:700;color:var(--navy)">{{ r.rank }}</td>
-          <td style="font-weight:600">{{ r.client }}</td>
-          <td class="text-muted">{{ r.title }}</td>
-          <td class="text-muted">{{ r.assignee }}</td>
-          <td style="font-weight:700">{{ r.days_overdue }}</td>
+          <td>
+            <a class="staff-name" href="{{ url_for('weekly_review_staff', name=s.assignee) }}">{{ s.assignee }} <span class="arw">&rarr;</span></a>
+          </td>
+          <td style="text-align:right">
+            <span class="ov-count {{ 'hot' if s.overdue else 'zero' }}">{{ s.overdue }}</span>
+          </td>
+          <td>
+            {% if s.overdue_by_type %}
+            <div class="type-chips">
+              {% for t in s.overdue_by_type %}
+              <span class="type-chip">{{ t.type }} <b>{{ t.count }}</b></span>
+              {% endfor %}
+            </div>
+            {% else %}
+            <span class="empty">No overdue returns</span>
+            {% endif %}
+          </td>
         </tr>
         {% else %}
-        <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">
-          Nothing overdue — every statement is on track.
-        </td></tr>
+        <tr><td colspan="3" style="text-align:center;padding:24px;color:var(--muted)">No staff member has Owen-owned work right now.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
 
-<!-- Per staff: a statements table (same format as the Top 10, minus the employee
-     column) with that person's counts by return type underneath. -->
+<!-- Firm-wide, after the last staff member: the top 10 most overdue statements and
+     the 10 most recent, across everyone. Live from the dashboard data, so it moves
+     with the week (new work opens, overdue ages) on every view. -->
 <div class="card">
-  <div class="card-title">Overdue statements by staff member</div>
-  {% for staff in review.per_staff %}
-  <div style="margin-bottom:26px">
-    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">
-      <div style="font-size:15px;font-weight:700;color:var(--navy)">{{ staff.assignee }}</div>
-      <div style="white-space:nowrap"><span style="font-size:24px;font-weight:800;color:var(--navy)">{{ staff.count }}</span> <span class="text-muted" style="font-size:12px">overdue</span></div>
+  <div class="card-title">Firm-wide — most overdue &amp; most recent
+    <span class="text-muted" style="font-weight:400;font-size:13px">(live from the dashboard · updates as work comes in)</span>
+  </div>
+  <div class="split" style="grid-template-columns:1fr 1fr;height:auto">
+    <!-- Top 10 most overdue, firm-wide -->
+    <div>
+      <p style="font-size:13px;font-weight:700;margin-bottom:8px">Top 10 most overdue statements</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30px">#</th>
+              <th>Client</th>
+              <th>Document / work</th>
+              <th>Employee</th>
+              <th style="text-align:right">Days overdue</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in review.top %}
+            <tr>
+              <td style="font-weight:700;color:var(--navy)">{{ r.rank }}</td>
+              <td style="font-weight:600">{{ r.client }}</td>
+              <td class="text-muted">{{ r.title }}</td>
+              <td class="text-muted">{{ r.assignee }}</td>
+              <td style="font-weight:700;text-align:right">{{ r.days_overdue }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">Nothing overdue — every statement is on track.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th style="width:36px">#</th>
-            <th>Client</th>
-            <th>Document / work</th>
-            <th>Days overdue</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for r in staff.statements %}
-          <tr>
-            <td style="font-weight:700;color:var(--navy)">{{ r.rank }}</td>
-            <td style="font-weight:600">{{ r.client }}</td>
-            <td class="text-muted">{{ r.title }}</td>
-            <td style="font-weight:700">{{ r.days_overdue }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    <div style="margin-top:8px">
-      <div class="text-muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Total by return type</div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px 16px;font-size:13px">
-        {% for t in staff.types %}
-        <span style="white-space:nowrap">{{ t.type }} <strong style="color:var(--navy)">{{ t.count }}</strong></span>
-        {% endfor %}
+    <!-- 10 most recent, firm-wide -->
+    <div>
+      <p style="font-size:13px;font-weight:700;margin-bottom:8px">10 most recent statements
+        <span class="text-muted" style="font-weight:400;font-size:12px">(newest opened)</span>
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30px">#</th>
+              <th>Client</th>
+              <th>Document / work</th>
+              <th>Employee</th>
+              <th style="text-align:right">Opened</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in review.recent %}
+            <tr>
+              <td style="font-weight:700;color:var(--navy)">{{ r.rank }}</td>
+              <td style="font-weight:600">{{ r.client }}</td>
+              <td class="text-muted">{{ r.title }}</td>
+              <td class="text-muted">{{ r.assignee }}</td>
+              <td style="text-align:right;white-space:nowrap">{{ r.opened }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">No statements yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
-  {% else %}
-  <p class="text-muted" style="font-size:13px">No staff member has an overdue statement right now.</p>
-  {% endfor %}
 </div>
 {% endblock %}

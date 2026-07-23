@@ -33,8 +33,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import matplotlib
 matplotlib.use("Agg")
-# Chart font: Times New Roman for a classic, professional look.
-matplotlib.rcParams["font.family"] = ["Times New Roman", "Times", "serif"]
+# Chart font: Times New Roman for a classic, professional look. "Times" (no
+# "New Roman") isn't a real installed family, so it never resolves -- listing
+# it here just makes every chart text lookup fail once before falling through
+# to serif, which is slow (findfont isn't cached across calls) and spammy.
+matplotlib.rcParams["font.family"] = ["Times New Roman", "serif"]
 from flask import (Flask, Response, abort, g, redirect, render_template, request,
                    send_from_directory, session, url_for)
 from matplotlib.figure import Figure
@@ -733,7 +736,7 @@ def _workload_chart(overdue_items: list) -> str | None:
         # Grand total on top of each employee's column.
         for xi, tot in zip(x, totals):
             ax.text(xi, tot + ymax * 0.02, str(tot), ha="center", va="bottom",
-                    fontsize=14, fontweight="800", color="#16202e")
+                    fontsize=14, fontweight="700", color="#16202e")
 
         ax.set_xticks(x)
         ax.set_xticklabels(people, rotation=35, ha="right")
@@ -747,7 +750,7 @@ def _workload_chart(overdue_items: list) -> str | None:
         ax.tick_params(axis="x", pad=10)
         for lbl in ax.get_xticklabels():
             lbl.set_fontsize(16)
-            lbl.set_fontweight("600")
+            lbl.set_fontweight("700")
         # Legend outside on the right; _fig_to_b64 saves with bbox_inches='tight'
         # so it's included without squeezing the bars.
         ax.legend(fontsize=14, frameon=False, loc="upper left",
@@ -775,7 +778,7 @@ def _age_chart(age_distribution: list) -> str | None:
     for bar, col in zip(bars, colors[:len(bars)]):
         bar.set_color(col)
     ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(labels, rotation=0, ha="center", fontsize=10, fontweight="600")
+    ax.set_xticklabels(labels, rotation=0, ha="center", fontsize=10, fontweight="700")
     _style_ax(ax, "Document Age Distribution")
     for b, v in zip(bars, values):
         if v:
@@ -1591,10 +1594,35 @@ def build_current_review() -> dict:
     return review.build_review(_get_data(), config.FIRM_NAME, datetime.now())
 
 
+def build_current_review_pdf() -> dict:
+    """The review for the PDF: the same summary as build_current_review PLUS a
+    `staff_pages` list — one build_staff_page() per staff row — so the printout
+    can carry each staff member's own landscape detail page. Built here (not in
+    build_review) so the on-screen main page doesn't pay for detail it renders
+    per-staff on demand instead."""
+    data = _get_data()
+    gen = datetime.now()
+    rv = review.build_review(data, config.FIRM_NAME, gen)
+    rv["staff_pages"] = [review.build_staff_page(data, config.FIRM_NAME, gen, s["assignee"])
+                         for s in rv["staff_rows"]]
+    return rv
+
+
 @app.route("/review")
 @admin_required
 def weekly_review():
     return render_template("review.html", review=build_current_review())
+
+
+@app.route("/review/staff")
+@admin_required
+def weekly_review_staff():
+    """One staff member's weekly-review detail page, reached by clicking a name on
+    the review. Name comes in as a query arg (staff names have spaces/periods, so a
+    path segment would need escaping); build_staff_page normalizes it."""
+    name = request.args.get("name", "")
+    staff = review.build_staff_page(_get_data(), config.FIRM_NAME, datetime.now(), name)
+    return render_template("review_staff.html", staff=staff)
 
 
 @app.route("/review.pdf")
@@ -1604,7 +1632,7 @@ def weekly_review_pdf():
 
     Served INLINE by default so clicking opens it in the browser's PDF viewer,
     where the admin can print or save. `?download=1` forces a file download."""
-    pdf = review_pdf.render_pdf(build_current_review())
+    pdf = review_pdf.render_pdf(build_current_review_pdf())
     fname = f"weekly-review-{date.today().isoformat()}.pdf"
     disposition = "attachment" if request.args.get("download") else "inline"
     return Response(pdf, mimetype="application/pdf",
