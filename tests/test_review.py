@@ -122,6 +122,114 @@ def test_completed_this_week_window_and_scope():
     assert r["week_start"] == ws.isoformat()
 
 
+def test_completed_this_week_includes_work_title():
+    # A client can bundle several documents under one client-level return (see
+    # analytics.build_projects); the "Completed this week" title joins their
+    # titles the same way assignee_label joins staff names.
+    gen = datetime(2026, 6, 29, 7, 0)
+    ws = review._week_start_sunday(gen.date())
+    this_week = ws.isoformat()
+    items = [
+        _item("a1", "Acme", "1040 Return", 40, owner="Owen Bradfield"),
+        _item("a2", "Acme", "State Return", 40, owner="Owen Bradfield"),
+        _item("b1", "Beta", "1099", 40, owner="Owen Bradfield"),
+    ]
+    pstates = {
+        "c:acme": {"return_type": "Tax: 1040", "completed": True, "completed_at": this_week},
+        "c:beta": {"return_type": "Tax: 1099", "completed": True, "completed_at": this_week},
+    }
+    r = review.build_review(_data(items, project_states=pstates), "NLC", gen)
+    by_client = {c["client"]: c for c in r["completed_this_week"]}
+    assert by_client["Acme"]["title"] == "1040 Return, State Return"
+    assert by_client["Beta"]["title"] == "1099"
+
+
+def test_completed_this_week_resets_from_last_import_not_calendar_week():
+    # A completion recorded just before a calendar week flips must not be silently
+    # dropped just because nobody viewed the review until the following week -- the
+    # window resets from the actual last import date, not a fixed calendar Sunday.
+    gen = datetime(2026, 6, 29, 7, 0)
+    ws = review._week_start_sunday(gen.date())
+    last_import = ws - timedelta(days=3)   # e.g. a Thursday import, in the
+                                            # PREVIOUS calendar week relative to `gen`
+    items = [_item("a", "Gamma", "W-2", 40, owner="Owen Bradfield")]
+    pstates = {
+        "c:gamma": {"return_type": "Tax: 1040", "completed": True,
+                    "completed_at": last_import.isoformat()},
+    }
+    data = _data(items, project_states=pstates)
+
+    # Old calendar-week rule (no last_import_date given) would exclude it.
+    r_calendar = review.build_review(data, "NLC", gen)
+    assert "Gamma" not in [c["client"] for c in r_calendar["completed_this_week"]]
+
+    # Anchored to the actual last import date, it's correctly included.
+    r_import = review.build_review(data, "NLC", gen, last_import_date=last_import)
+    assert "Gamma" in [c["client"] for c in r_import["completed_this_week"]]
+    assert r_import["week_start"] == last_import.isoformat()
+
+
+def test_completed_this_week_excludes_closed_other():
+    # A client closed out ONLY via a "Completed - <word>" status (see
+    # analytics.status_is_closed_other) is not a real completion -- even though
+    # apply_import_completion stamps project_state.completed_at for it too (the
+    # Settings "Completed statuses" list includes those variants), it must never
+    # show up in "Completed this week".
+    gen = datetime(2026, 6, 29, 7, 0)
+    ws = review._week_start_sunday(gen.date())
+    items = [_item("a", "ClosedOther", "Extension", 40, owner="Owen Bradfield",
+                    status="Completed - Cancelled")]
+    pstates = {
+        "c:closedother": {"return_type": "Tax: 1040", "completed": True,
+                          "completed_source": "import", "completed_at": ws.isoformat()},
+    }
+    data = _data(items, project_states=pstates)
+    r = review.build_review(data, "NLC", gen, last_import_date=ws)
+    assert "ClosedOther" not in [c["client"] for c in r["completed_this_week"]]
+
+
+def test_staff_page_recent_overdue_projects_sorted_freshest_first():
+    # "10 most recently overdue projects" = smallest days_overdue first (just
+    # crossed the threshold), grouped at PROJECT level -- distinct from
+    # top_overdue's document-level "worst first" ordering. Excludes non-overdue
+    # projects and other staff members' work.
+    items = [
+        _item("a", "OldClient", "W-2", 60, assignee="Sarah"),      # long overdue
+        _item("b", "FreshClient", "1099", 16, assignee="Sarah"),   # just overdue
+        _item("c", "OpenNotOverdue", "K-1", 5, assignee="Sarah"),  # not overdue
+        _item("d", "OtherStaff", "1040", 20, assignee="James"),    # different staff
+    ]
+    sp = review.build_staff_page(_data(items), "NLC", datetime(2026, 6, 29, 7, 0), "Sarah")
+    rows = sp["recent_overdue"]
+    assert [r["client"] for r in rows] == ["FreshClient", "OldClient"]
+    assert rows[0]["days_overdue"] < rows[1]["days_overdue"]
+    assert [r["rank"] for r in rows] == [1, 2]
+    assert all(r["return_type"] for r in rows)
+    assert rows[0]["title"] == "1099"
+    assert rows[1]["title"] == "W-2"
+
+
+def test_staff_page_recent_overdue_joins_multiple_document_titles():
+    # A client can bundle several overdue documents under one client-level
+    # return (see analytics.build_projects); the title joins them the same way
+    # the Weekly Review PDF's Completed-this-week column does.
+    items = [
+        _item("a1", "Multi", "1040 Return", 40, assignee="Sarah"),
+        _item("a2", "Multi", "State Return", 40, assignee="Sarah"),
+    ]
+    sp = review.build_staff_page(_data(items), "NLC", datetime(2026, 6, 29, 7, 0), "Sarah")
+    assert sp["recent_overdue"][0]["title"] == "1040 Return, State Return"
+
+
+def test_staff_page_recent_overdue_capped_at_recent_n():
+    items = [_item(str(i), f"Client{i:02d}", "Doc", 20 + i, assignee="Sarah")
+             for i in range(15)]
+    sp = review.build_staff_page(_data(items), "NLC", datetime(2026, 6, 29, 7, 0),
+                                 "Sarah", recent_n=10)
+    assert len(sp["recent_overdue"]) == 10
+    assert sp["recent_overdue"][0]["days_overdue"] == 20 - 14  # freshest (20 days old) first
+
+
 def test_unassigned_sorted_last():
     r = _build([
         _item("a", "Acme", "W-2", 40, assignee="(unassigned)"),

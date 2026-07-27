@@ -3,7 +3,7 @@ from datetime import date
 import pandas as pd
 
 import config
-from data import analytics, importer
+from data import analytics, importer, service
 from data.store import Store
 
 TODAY = date(2026, 6, 29)
@@ -46,12 +46,13 @@ def test_apply_mapping_sets_project_and_type():
 
 
 # ---- analytics.build_projects ------------------------------------------
-def _item(key, client, title, days, rtype_raw="", project_key=None):
+def _item(key, client, title, days, rtype_raw="", project_key=None, assignee=None):
     start = date(2026, 6, 29) - __import__("datetime").timedelta(days=days)
     it = {
         "item_key": key, "client": client, "title": title, "status": "Requested",
         "first_seen": start, "source_date": start, "return_type_raw": rtype_raw,
         "project_key": project_key or ("c:" + client.lower()),
+        "assignee": assignee,
     }
     return it
 
@@ -117,6 +118,51 @@ def test_project_totals_split_by_specific_type():
     assert totals["by_type"]["Tax: 1120"] == 1
     assert totals["by_type"]["Accounting/Bookkeeping"] == 1
     assert totals["by_type"]["Unclassified"] == 1
+
+
+def test_build_projects_excludes_unassigned_placeholder_from_multi_assignee_list():
+    # service.dashboard_data normalizes former/inactive staff (see
+    # config.UNASSIGNED_STAFF_NAMES) to "Unassigned" before this runs. That
+    # placeholder must not show up as a real name alongside an actual assignee.
+    items = _enriched([
+        _item("d1", "Smith", "W-2", 5, assignee="Dana Whitfield"),
+        _item("d2", "Smith", "1099", 6, assignee="Unassigned"),
+    ])
+    p = analytics.build_projects(items, {}, {})[0]
+    assert p["assignees"] == ["Dana Whitfield"]
+    assert p["assignee_label"] == "Dana Whitfield"
+
+
+def test_build_projects_all_unassigned_falls_back_to_single_label():
+    items = _enriched([
+        _item("d1", "Smith", "W-2", 5, assignee="Unassigned"),
+        _item("d2", "Smith", "1099", 6, assignee="(unassigned)"),
+    ])
+    p = analytics.build_projects(items, {}, {})[0]
+    assert p["assignees"] == ["Unassigned"]
+    assert p["assignee_label"] == "Unassigned"
+
+
+def test_dashboard_data_normalizes_former_staff_to_unassigned(tmp_path):
+    s = Store(tmp_path / "unassigned.db")
+    try:
+        s.upsert_items([
+            {"item_key": "d1", "assignee": "Clara Bexley", "client": "Smith",
+             "title": "W-2", "status": "In Progress", "source_date": TODAY,
+             "project_key": "c:smith", "return_type_raw": ""},
+            {"item_key": "d2", "assignee": "Dana Whitfield", "client": "Acme",
+             "title": "1099", "status": "In Progress", "source_date": TODAY,
+             "project_key": "c:acme", "return_type_raw": ""},
+        ], TODAY)
+        data = service.dashboard_data(s, TODAY, overdue_days=14)
+        by_client = {it["client"]: it for it in data["items"]}
+        assert by_client["Smith"]["assignee"] == "Unassigned"   # was "Clara Bexley"
+        assert by_client["Acme"]["assignee"] == "Dana Whitfield"  # untouched
+
+        names = {it["assignee"] for it in data["items"]}
+        assert "Clara Bexley" not in names
+    finally:
+        s.close()
 
 
 # ---- store: doc + project state ----------------------------------------

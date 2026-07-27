@@ -233,28 +233,32 @@ def _stmt_cols(x0: float, x1: float, show_emp: bool = False) -> dict:
     }
 
 
-def _stmt_header(doc: _Doc, cols: dict, last_label: str):
+def _stmt_header(doc: _Doc, cols: dict, last_label: str, doc_label: str = "DOCUMENT / WORK",
+                 emp_label: str = "EMPLOYEE"):
     doc.text(cols["rank"], "#", size=8.5, weight="bold", color=MUTED, ha="right")
     doc.text(cols["client"], "CLIENT", size=8.5, weight="bold", color=MUTED)
-    doc.text(cols["doc"], "DOCUMENT / WORK", size=8.5, weight="bold", color=MUTED)
+    doc.text(cols["doc"], doc_label, size=8.5, weight="bold", color=MUTED)
     if cols.get("show_emp"):
-        doc.text(cols["emp"], "EMPLOYEE", size=8.5, weight="bold", color=MUTED)
+        doc.text(cols["emp"], emp_label, size=8.5, weight="bold", color=MUTED)
     doc.text(cols["last"], last_label, size=8.5, weight="bold", color=MUTED, ha="right")
     doc.advance(_ROW * 0.85)
     doc.rule(color=NAVY, width=1.2, x0=cols["rank"] - 0.012, x1=cols["last"])
     doc.advance(GAP * 0.7)
 
 
-def _stmt_row(doc: _Doc, cols: dict, r: dict, last_val: str, striped: bool):
+def _stmt_row(doc: _Doc, cols: dict, r: dict, last_val: str, striped: bool, doc_val: str = None,
+             emp_val: str = None):
     base = doc.y
     if striped:
         doc.band(_ROW, x0=cols["rank"] - 0.012, x1=cols["last"])
     cy = base + _ROW * 0.5          # vertical center of the row, so text sits inside the band
     doc.text(cols["rank"], str(r["rank"]), size=9.5, weight="bold", color=NAVY, ha="right", y=cy, va="center")
     doc.text(cols["client"], _truncate(r["client"], cols["client_chars"]), size=9.5, y=cy, va="center")
-    doc.text(cols["doc"], _truncate(r["title"], cols["doc_chars"]), size=9.5, color=MUTED, y=cy, va="center")
+    doc.text(cols["doc"], _truncate(r["title"] if doc_val is None else doc_val, cols["doc_chars"]),
+             size=9.5, color=MUTED, y=cy, va="center")
     if cols.get("show_emp"):
-        doc.text(cols["emp"], _truncate(r.get("assignee", ""), cols["emp_chars"]),
+        doc.text(cols["emp"], _truncate(r.get("assignee", "") if emp_val is None else emp_val,
+                                        cols["emp_chars"]),
                  size=9.5, color=MUTED, y=cy, va="center")
     doc.text(cols["last"], str(last_val), size=9.5, weight="bold", ha="right", y=cy, va="center")
     doc.advance(_ROW)
@@ -262,17 +266,25 @@ def _stmt_row(doc: _Doc, cols: dict, r: dict, last_val: str, striped: bool):
 
 def _stmt_table(doc: _Doc, x0: float, x1: float, start_y: float, title: str,
                 rows: list, last_label: str, last_key, empty_msg: str,
-                show_emp: bool = False) -> float:
+                show_emp: bool = False, doc_label: str = "DOCUMENT / WORK",
+                doc_key=None, emp_label: str = "EMPLOYEE", emp_key=None) -> float:
     """Draw a titled statements table in the column [x0, x1] starting at start_y.
+    `doc_key`, when given, extracts the middle column's value from each row instead
+    of the default `r["title"]`. `emp_key`/`emp_label` do the same for the
+    show_emp column (default: `r["assignee"]` / "EMPLOYEE") -- used by the
+    staff page's recently-overdue-projects table to show DOCUMENT / WORK and
+    RETURN TYPE side by side instead of an employee column.
     Returns the cursor y at the end (so the caller can align/stack tables)."""
     doc.y = start_y
     doc.text(x0, title, size=11.5, weight="bold", color=INK)
     doc.advance(_ROW * 1.15)
     cols = _stmt_cols(x0, x1, show_emp=show_emp)
-    _stmt_header(doc, cols, last_label)
+    _stmt_header(doc, cols, last_label, doc_label=doc_label, emp_label=emp_label)
     if rows:
         for i, r in enumerate(rows):
-            _stmt_row(doc, cols, r, last_key(r), striped=(i % 2 == 1))
+            _stmt_row(doc, cols, r, last_key(r), striped=(i % 2 == 1),
+                     doc_val=(doc_key(r) if doc_key else None),
+                     emp_val=(emp_key(r) if emp_key else None))
     else:
         doc.text(x0, empty_msg, size=10, color=MUTED)
         doc.advance(LINE)
@@ -337,8 +349,9 @@ _DONE_CAP = 30   # matches the on-screen "Completed this week" cap (review.html)
 
 _DONE_COLS = {
     "client": LEFT + 0.01,
-    "type":   0.40,
-    "emp":    0.62,
+    "title":  0.28,
+    "type":   0.50,
+    "emp":    0.70,
     "date":   RIGHT,
 }
 
@@ -365,6 +378,7 @@ def _summary_page(doc: _Doc, rv: dict):
     doc.advance(0.035)
     if done:
         doc.text(_DONE_COLS["client"], "CLIENT", size=8.5, weight="bold", color=MUTED)
+        doc.text(_DONE_COLS["title"], "WORK TITLE", size=8.5, weight="bold", color=MUTED)
         doc.text(_DONE_COLS["type"], "RETURN TYPE", size=8.5, weight="bold", color=MUTED)
         doc.text(_DONE_COLS["emp"], "EMPLOYEE", size=8.5, weight="bold", color=MUTED)
         doc.text(_DONE_COLS["date"], "COMPLETED", size=8.5, weight="bold", color=MUTED, ha="right")
@@ -377,9 +391,10 @@ def _summary_page(doc: _Doc, rv: dict):
             if i % 2 == 1:
                 doc.band(LINE)
             cy = base + LINE * 0.5      # center the row text within its band
-            doc.text(_DONE_COLS["client"], _truncate(r["client"], 44), size=10, weight="bold", y=cy, va="center")
-            doc.text(_DONE_COLS["type"], _truncate(r["return_type"], 28), size=10, color=MUTED, y=cy, va="center")
-            doc.text(_DONE_COLS["emp"], _truncate(r["assignee"], 30), size=10, color=MUTED, y=cy, va="center")
+            doc.text(_DONE_COLS["client"], _truncate(r["client"], 28), size=10, weight="bold", y=cy, va="center")
+            doc.text(_DONE_COLS["title"], _truncate(r.get("title", ""), 26), size=10, color=MUTED, y=cy, va="center")
+            doc.text(_DONE_COLS["type"], _truncate(r["return_type"], 24), size=10, color=MUTED, y=cy, va="center")
+            doc.text(_DONE_COLS["emp"], _truncate(r["assignee"], 24), size=10, color=MUTED, y=cy, va="center")
             doc.text(_DONE_COLS["date"], _short_date(r["completed_at"]), size=10,
                      weight="bold", color=GREEN_INK, ha="right", y=cy, va="center")
             doc.advance(LINE)
@@ -479,9 +494,9 @@ def _staff_page(doc: _Doc, sp: dict):
         sp.get("top_overdue", []), "DAYS OVERDUE", lambda r: r["days_overdue"],
         "Nothing overdue — all caught up.")
     right_end = _stmt_table(
-        doc, 0.525, RIGHT, start_y, "10 most recent statements",
-        sp.get("recent", []), "OPENED", lambda r: _short_date(r.get("opened", "")),
-        "No statements for this staff member.")
+        doc, 0.525, RIGHT, start_y, "10 most recently overdue projects",
+        sp.get("recent_overdue", []), "DAYS OVERDUE", lambda r: r["days_overdue"],
+        "Nothing recently overdue for this staff member.")
     doc.y = max(left_end, right_end)
 
 

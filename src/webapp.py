@@ -51,6 +51,15 @@ import vault
 from data import importer, review, service
 from data.store import Store
 
+# The app normally runs as a windowless pythonw.exe (no console), so the
+# console-only logging set up above is invisible in practice -- an unhandled
+# exception (e.g. during import) leaves no trace anywhere. Add a file handler
+# now that config's data dir is available, so there's always somewhere to look.
+_log_file_handler = logging.FileHandler(config.default_log_path(), encoding="utf-8")
+_log_file_handler.setFormatter(logging.Formatter(
+    "%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+logging.getLogger().addHandler(_log_file_handler)
+
 app = Flask(__name__)
 # Random key persisted per-machine (see config.get_or_create_secret_key). This
 # replaces the old hardcoded key, which made session cookies forgeable.
@@ -1126,7 +1135,14 @@ def projects():
     data = _get_data()
     ft = request.args.get("filter", "All")
     pkey = request.args.get("pkey", "")
-    show_done = request.args.get("done", "0") == "1"
+    # Which view: "0" open (default), "1" completed, "other" completed-other
+    # (returns closed via a "Completed - <word>" status). Kept in the `done` param
+    # so existing 0/1 links stay valid.
+    view = request.args.get("done", "0")
+    if view not in ("0", "1", "other"):
+        view = "0"
+    show_done = view == "1"
+    show_closed_other = view == "other"
     sel_year = request.args.get("year", "")
     sel_month = request.args.get("month", "")
     staff = request.args.get("staff", "")
@@ -1158,15 +1174,19 @@ def projects():
             type_chips=staff_chips, counts=staff_counts,
             # Placeholders so the shared template never hits an undefined var.
             display=[], selected=None, show_done=False,
+            show_closed_other=False, view="0",
             totals=data["project_totals"], all_types=[],
             years=[], sel_year="", sel_month="")
 
     if show_done:
-        # Completed tab: show ONLY completed returns. Type filtering still works
-        # here (see type_chips/counts below), so the per-type numbers stay useful.
+        # Completed tab: show ONLY genuinely-completed returns (exact "Completed").
+        # Type filtering still works here, so the per-type numbers stay useful.
         relevant = [p for p in all_proj if p["completed"]]
+    elif show_closed_other:
+        # Completed - other: returns closed only via a "Completed - <word>" status.
+        relevant = [p for p in all_proj if p.get("closed_other")]
     else:
-        relevant = [p for p in all_proj if not p["completed"]]
+        relevant = [p for p in all_proj if p["open"]]
 
     # Filter chips are built from the types actually present in whichever set is
     # shown (open returns, or completed ones when "Show closed" is on), so the
@@ -1208,13 +1228,15 @@ def projects():
     if request.headers.get("X-Requested-With") == "fetch":
         return render_template("projects_ajax.html",
                                selected=selected, filter_type=ft,
-                               show_done=show_done, all_types=all_types,
+                               show_done=show_done, show_closed_other=show_closed_other,
+                               view=view, all_types=all_types,
                                sel_year=sel_year, sel_month=sel_month)
     return render_template("projects.html",
                            staff_mode=False, staff="", staff_items=None,
                            all_staff_names=all_staff_names,
                            display=display, selected=selected,
                            filter_type=ft, show_done=show_done,
+                           show_closed_other=show_closed_other, view=view,
                            counts=counts, totals=totals,
                            type_chips=type_chips, all_types=all_types,
                            years=years, sel_year=sel_year, sel_month=sel_month)
@@ -1588,10 +1610,23 @@ def settings_completed_statuses():
 # on screen and prints (or saves) the PDF on demand; /review.pdf renders the same
 # report build_current_review() shows, so the printout matches the page exactly.
 
+def _last_import_date() -> date | None:
+    """The date of the most recent import, or None if nothing's been imported yet.
+    "Completed this week" resets from this date, not a fixed calendar Sunday."""
+    last = get_store().last_import()
+    if not last:
+        return None
+    try:
+        return date.fromisoformat(str(last["imported_at"])[:10])
+    except (ValueError, TypeError):
+        return None
+
+
 def build_current_review() -> dict:
     """The weekly review for right now, from the same cached dashboard data the
     rest of the app reads."""
-    return review.build_review(_get_data(), config.FIRM_NAME, datetime.now())
+    return review.build_review(_get_data(), config.FIRM_NAME, datetime.now(),
+                               last_import_date=_last_import_date())
 
 
 def build_current_review_pdf() -> dict:
@@ -1602,8 +1637,10 @@ def build_current_review_pdf() -> dict:
     per-staff on demand instead."""
     data = _get_data()
     gen = datetime.now()
-    rv = review.build_review(data, config.FIRM_NAME, gen)
-    rv["staff_pages"] = [review.build_staff_page(data, config.FIRM_NAME, gen, s["assignee"])
+    last_import = _last_import_date()
+    rv = review.build_review(data, config.FIRM_NAME, gen, last_import_date=last_import)
+    rv["staff_pages"] = [review.build_staff_page(data, config.FIRM_NAME, gen, s["assignee"],
+                                                 last_import_date=last_import)
                          for s in rv["staff_rows"]]
     return rv
 
@@ -1621,7 +1658,8 @@ def weekly_review_staff():
     the review. Name comes in as a query arg (staff names have spaces/periods, so a
     path segment would need escaping); build_staff_page normalizes it."""
     name = request.args.get("name", "")
-    staff = review.build_staff_page(_get_data(), config.FIRM_NAME, datetime.now(), name)
+    staff = review.build_staff_page(_get_data(), config.FIRM_NAME, datetime.now(), name,
+                                    last_import_date=_last_import_date())
     return render_template("review_staff.html", staff=staff)
 
 
@@ -1658,7 +1696,11 @@ def import_view():
 def import_upload():
     f = request.files.get("csv_file")
     if not f or not f.filename:
-        return redirect(url_for("import_view"))
+        # Previously a silent redirect back to this same page -- indistinguishable
+        # from the page just not responding. Say what actually happened.
+        return render_template("import.html", step=0, ctx={}, result=None,
+                               logical_fields=config.LOGICAL_FIELDS,
+                               upload_error="No file was selected. Choose a file, then click Upload & continue.")
 
     fname = f.filename.lower()
     if fname.endswith(".xlsx") or fname.endswith(".xlsm"):
@@ -1668,15 +1710,20 @@ def import_upload():
     else:
         suffix = ".csv"
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    f.save(tmp.name)
-    tmp.close()
+    # Saved under the app's own stable data directory, NOT the OS temp dir: on
+    # this deployment (Remote Desktop Services) tempfile.gettempdir() resolves
+    # to a numbered per-session folder that can go stale mid-wizard (e.g. if the
+    # app process restarts between "Upload" and "Run import"), silently losing
+    # the file the user just uploaded. See config.default_import_upload_dir.
+    tmp_path = config.default_import_upload_dir() / f"{secrets.token_hex(8)}{suffix}"
+    f.save(tmp_path)
 
     try:
-        df = importer.load_file(tmp.name)
+        df = importer.load_file(str(tmp_path))
     except Exception as e:
+        logging.exception("Import upload: could not read %s", f.filename)
         try:
-            Path(tmp.name).unlink(missing_ok=True)
+            tmp_path.unlink(missing_ok=True)
         except OSError:
             pass
         return render_template("import.html", step=0, ctx={}, result=None,
@@ -1699,7 +1746,7 @@ def import_upload():
 
     session["import_step"] = 1
     session["import_ctx"] = {
-        "tmp_path": tmp.name,
+        "tmp_path": str(tmp_path),
         "filename": f.filename,
         "columns": columns,
         "guesses": guesses,
@@ -1716,9 +1763,16 @@ def import_run():
     ctx = session.get("import_ctx", {})
     tmp_path = ctx.get("tmp_path", "")
     if not tmp_path or not Path(tmp_path).exists():
+        # Previously a silent reset straight back to step 0 -- indistinguishable
+        # from the button just not working. Explain what happened: the uploaded
+        # file is gone (e.g. the server restarted while this wizard was open).
         session.pop("import_step", None)
         session.pop("import_ctx", None)
-        return redirect(url_for("import_view"))
+        return render_template("import.html", step=0, ctx={}, result=None,
+                               logical_fields=config.LOGICAL_FIELDS,
+                               upload_error="Your uploaded file is no longer available "
+                                            "(the server may have restarted). Please "
+                                            "upload the file again.")
 
     mapping = {}
     for field, _label, _req in config.LOGICAL_FIELDS:
@@ -1731,10 +1785,27 @@ def import_run():
     completed = request.form.getlist("completed_status")
     get_store().set_setting("completed_statuses", completed)
 
-    stats = service.import_csv(
-        get_store(), tmp_path, mapping, [], date.today(),
-        completed_statuses=completed,
-    )
+    try:
+        stats = service.import_csv(
+            get_store(), tmp_path, mapping, [], date.today(),
+            completed_statuses=completed,
+        )
+    except Exception:
+        # Previously unhandled: a blank/generic error page with no clue what
+        # happened, and (running as windowless pythonw.exe) nothing logged
+        # anywhere to check afterward. Now: logged to config.default_log_path(),
+        # and the user stays on the mapping step (their column choices are kept
+        # in ctx) so they can just retry "Run import" without re-uploading --
+        # re-running the same file is safe, upsert_items is keyed by item_key.
+        logging.exception("Import run failed for %s", ctx.get("filename", "?"))
+        return render_template("import.html", step=1, ctx=ctx, result=None,
+                               logical_fields=config.LOGICAL_FIELDS,
+                               completed_saved=completed,
+                               run_error="Something went wrong while importing this file. "
+                                         "Your column mapping is unchanged -- try Run "
+                                         "import again. If it keeps failing, tell Ben "
+                                         "and check the log at "
+                                         f"{config.default_log_path()}.")
     get_store().save_mapping(ctx.get("sig", ""), mapping, date.today())
     _audit("import_run", f"{ctx.get('filename', '?')}: {stats.get('new', 0)} new, "
                          f"{stats.get('updated', 0)} updated")

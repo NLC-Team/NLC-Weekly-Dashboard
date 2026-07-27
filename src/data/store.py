@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS items (
     title       TEXT,
     last_status TEXT,
     source_date TEXT,
+    due_date    TEXT,
     first_seen  TEXT,
     last_seen   TEXT,
     resolved    INTEGER DEFAULT 0,
@@ -104,7 +105,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_archive_week ON audit_archive(week);
 # Columns added after the first release; applied to older databases on open.
 _MIGRATIONS = {
     "items": [("project_key", "TEXT"), ("return_type_raw", "TEXT"),
-              ("client_owner", "TEXT")],
+              ("client_owner", "TEXT"), ("due_date", "TEXT")],
     "staff": [("username", "TEXT"), ("password_hash", "TEXT"),
               ("status", "TEXT DEFAULT 'active'"), ("email", "TEXT"),
               ("email_verified", "INTEGER DEFAULT 0"),
@@ -303,28 +304,30 @@ class Store:
                     inserts.append((
                         rec["item_key"], rec["assignee"], rec["client"], client_owner,
                         rec["title"], rec["status"], _iso(rec.get("source_date")),
+                        _iso(rec.get("due_date")),
                         first_seen, iso, rec.get("project_key"), rec.get("return_type_raw"),
                     ))
                 else:
                     updates.append((
                         rec["assignee"], rec["client"], client_owner, rec["title"],
-                        rec["status"], _iso(rec.get("source_date")), iso,
+                        rec["status"], _iso(rec.get("source_date")), _iso(rec.get("due_date")), iso,
                         rec.get("project_key"), rec.get("return_type_raw"), rec["item_key"],
                     ))
 
             if inserts:
                 self.conn.executemany(
                     "INSERT INTO items(item_key, assignee, client, client_owner, title, "
-                    "last_status, source_date, first_seen, last_seen, resolved, resolved_at, "
+                    "last_status, source_date, due_date, first_seen, last_seen, resolved, resolved_at, "
                     "project_key, return_type_raw) "
-                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
+                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)",
                     inserts,
                 )
             if updates:
                 self.conn.executemany(
                     "UPDATE items SET assignee=?, client=?, "
                     "client_owner=COALESCE(?, client_owner), title=?, last_status=?, "
-                    "source_date=COALESCE(?, source_date), last_seen=?, resolved=0, "
+                    "source_date=COALESCE(?, source_date), due_date=COALESCE(?, due_date), "
+                    "last_seen=?, resolved=0, "
                     "resolved_at=NULL, project_key=?, return_type_raw=? WHERE item_key=?",
                     updates,
                 )
@@ -357,6 +360,7 @@ class Store:
                     "title": r["title"],
                     "status": r["last_status"],
                     "source_date": _to_date(r["source_date"]),
+                    "due_date": _to_date(r["due_date"]),
                     "first_seen": _to_date(r["first_seen"]),
                     "project_key": r["project_key"] or ("c:" + (r["client"] or "").strip().lower()),
                     "return_type_raw": r["return_type_raw"],

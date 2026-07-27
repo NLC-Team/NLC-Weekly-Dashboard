@@ -21,7 +21,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="pkey" value="{{ selected.project_key }}">
     <input type="hidden" name="filter" value="{{ filter_type }}">
-    <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
+    <input type="hidden" name="done" value="{{ view }}">
     <label style="margin-bottom:0;text-transform:none;font-size:12px;font-weight:600">Return type:</label>
     <select name="return_type">
       {% for rt in all_types %}
@@ -35,9 +35,9 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="pkey" value="{{ selected.project_key }}">
     <input type="hidden" name="filter" value="{{ filter_type }}">
-    <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
+    <input type="hidden" name="done" value="{{ view }}">
     <button type="submit" class="btn {{ 'btn-secondary' if selected.completed else 'btn-primary' }}">
-      {{ 'Open client' if selected.completed else 'Done' }}
+      {{ 'Open client' if selected.completed else 'Complete' }}
     </button>
   </form>
 
@@ -45,7 +45,7 @@
      bookmark it or paste it to a colleague. #}
   <button type="button" class="btn btn-secondary copy-link-btn"
           title="Copy a direct link to this return"
-          data-link="{{ url_for('projects', pkey=selected.project_key, done=('1' if selected.completed else '0'), year=sel_year, month=sel_month) }}">
+          data-link="{{ url_for('projects', pkey=selected.project_key, done=view, year=sel_year, month=sel_month) }}">
     Copy link
   </button>
 
@@ -55,7 +55,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="pkey" value="{{ selected.project_key }}">
     <input type="hidden" name="filter" value="{{ filter_type }}">
-    <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
+    <input type="hidden" name="done" value="{{ view }}">
     <button type="submit" class="btn btn-danger">Delete client</button>
   </form>
 </div>

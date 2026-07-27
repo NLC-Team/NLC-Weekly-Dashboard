@@ -50,7 +50,7 @@
       </thead>
       <tbody id="clientsBody">
         {% for p in projects %}
-        <tr data-client="{{ p.client | lower }}" data-completed="{{ '1' if p.completed else '0' }}">
+        <tr data-client="{{ p.client | lower }}" data-completed="{{ '1' if (p.completed or p.closed_other) else '0' }}">
           <td><input type="checkbox" name="pkey" value="{{ p.project_key }}" class="rowChk"
                 style="width:16px;height:16px;cursor:pointer;accent-color:var(--danger)"></td>
           <td style="font-weight:600">{{ p.client }}</td>
@@ -59,6 +59,7 @@
           <td>{{ p.days_open }}</td>
           <td>
             {% if p.completed %}<span class="badge badge-done">Done</span>
+            {% elif p.closed_other %}<span class="badge badge-done">Completed – other</span>
             {% elif p.overdue %}<span class="badge badge-overdue">Overdue</span>
             {% else %}<span class="badge badge-open">Open</span>{% endif %}
           </td>

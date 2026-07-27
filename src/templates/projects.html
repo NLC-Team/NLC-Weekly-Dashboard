@@ -51,7 +51,7 @@
        employee's statements by type; otherwise they filter the return list. #}
     {% for name in ['All'] + type_chips %}
     <a class="chip {{ 'active' if filter_type == name }}"
-       href="{% if staff_mode %}{{ url_for('projects', staff=staff, filter=name) }}{% else %}{{ url_for('projects', filter=name, done=('1' if show_done else '0')) }}{% endif %}">
+       href="{% if staff_mode %}{{ url_for('projects', staff=staff, filter=name) }}{% else %}{{ url_for('projects', filter=name, done=view) }}{% endif %}">
       {{ name }} ({{ counts.get(name, 0) }})
     </a>
     {% endfor %}
@@ -62,7 +62,7 @@
     <form method="get" action="{{ url_for('projects') }}"
           style="display:flex;gap:6px;align-items:center;margin-left:4px">
       <input type="hidden" name="filter" value="{{ filter_type }}">
-      <input type="hidden" name="done" value="{{ '1' if show_done else '0' }}">
+      <input type="hidden" name="done" value="{{ view }}">
       <select name="month" data-autosubmit style="font-size:12px;padding:5px 8px">
         <option value="">Any month</option>
         {% for m in range(1, 13) %}
@@ -81,7 +81,11 @@
     <a class="chip {{ 'active' if show_done }}"
        href="{{ url_for('projects', filter='All', done=('0' if show_done else '1')) }}"
        style="margin-left:8px">
-      {% if show_done %}&#10003; Showing done ({{ display|length }}) — click to exit{% else %}Show done ({{ totals.completed_total }}){% endif %}
+      {% if show_done %}&#10003; Showing completed ({{ display|length }}) — click to exit{% else %}Show completed ({{ totals.completed_total }}){% endif %}
+    </a>
+    <a class="chip {{ 'active' if show_closed_other }}"
+       href="{{ url_for('projects', filter='All', done=('0' if show_closed_other else 'other')) }}">
+      {% if show_closed_other %}&#10003; Showing completed – other ({{ display|length }}) — click to exit{% else %}Completed – other ({{ totals.closed_other_total }}){% endif %}
     </a>
     {% endif %}
   </div>
@@ -147,7 +151,7 @@
         </thead>
         <tbody id="returnsBody">
           {% for p in display %}
-          {{ project_row(p, selected, filter_type, show_done, sel_year, sel_month) }}
+          {{ project_row(p, selected, filter_type, view, sel_year, sel_month) }}
           {% else %}
           <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No returns match this filter.</td></tr>
           {% endfor %}

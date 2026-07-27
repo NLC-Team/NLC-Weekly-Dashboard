@@ -36,6 +36,9 @@
 <!-- Step 2: column mapping + statuses -->
 <div class="card">
   <div class="card-title">Map columns — {{ ctx.filename }}</div>
+  {% if run_error %}
+  <div class="msg msg-err" style="margin-bottom:14px">{{ run_error }}</div>
+  {% endif %}
   <p class="text-muted mb-2" style="font-size:12px">
     {{ ctx.row_count }} rows detected. Match each dashboard field to a column in your CSV.
     Required fields are marked <span style="color:var(--danger)">*</span>.

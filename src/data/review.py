@@ -99,6 +99,16 @@ def _stmt_row(it: dict, rank: int) -> dict:
     }
 
 
+def _project_title_label(p: dict) -> str:
+    """A return can bundle several documents (grouping is client-level, see
+    analytics.build_projects) with different titles, e.g. "1040 Return" +
+    "State Return" -- join them the same way assignee_label joins staff names."""
+    titles = sorted({d["title"].strip() for d in (p.get("documents") or [])
+                     if d.get("title", "").strip()})
+    return (", ".join(titles) if len(titles) <= 2
+            else f"{titles[0]} +{len(titles) - 1}")
+
+
 def _types_list(counter) -> list:
     """A Counter of {type: n} as [{type, count}, ...], most common first, ties
     broken alphabetically so the order is stable across renders."""
@@ -153,7 +163,7 @@ def _staff_project_stats(data: dict, week_start: date) -> dict:
 
 
 def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
-                 per_staff_limit: int = 10) -> dict:
+                 per_staff_limit: int = 10, last_import_date: date | None = None) -> dict:
     """Shape dashboard_data into the weekly review. Returns:
 
         {
@@ -171,11 +181,15 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
     Ordering matches the dashboard: overdue statements by days_overdue, worst first.
     Scope: only Owen-owned clients, excluding NO CORRESPONDENCE statuses (see _in_scope).
     """
-    # "Completed this week" — returns whose completion date is on/after the most
-    # recent Sunday. Scoped like the rest of the review (Owen-owned). Reads the
-    # project list (which already has the dashboard-wide hidden items removed).
+    # "Completed this week" resets from the most recent IMPORT date, not a fixed
+    # calendar Sunday -- the review is meant to show what finished since the data
+    # was last refreshed, however many days that was, so nothing completed just
+    # before a calendar week flips silently falls out of every week's report.
+    # `last_import_date` is the caller's source of truth (webapp.py passes
+    # store.last_import()); fall back to the old Sunday-of-`generated_at` rule only
+    # when no import history is available (e.g. a brand-new database).
     gen_date = generated_at.date() if hasattr(generated_at, "date") else generated_at
-    week_start = _week_start_sunday(gen_date)
+    week_start = last_import_date or _week_start_sunday(gen_date)
     completed_week = []
     for p in data.get("projects", []):
         if not (p.get("completed") and p.get("completed_at")):
@@ -193,6 +207,7 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
         if cad >= week_start:
             completed_week.append({
                 "client": p.get("client", ""),
+                "title": _project_title_label(p),
                 "return_type": p.get("return_type", ""),
                 "assignee": p.get("assignee_label", ""),
                 "completed_at": cad.isoformat(),
@@ -270,18 +285,23 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
 
 
 def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
-                     top_n: int = 10, recent_n: int = 10) -> dict:
+                     top_n: int = 10, recent_n: int = 10,
+                     last_import_date: date | None = None) -> dict:
     """One staff member's detail page for the weekly review (Owen-owned scope).
 
     Project-level headline tiles (completed this week / open / overdue, plus open
     broken out by work type) come from _staff_project_stats — the SAME tallies the
     main page's summary row uses, so a staff member's numbers match between the two.
-    The two statement-level lists give the detail: their Top-N most overdue
-    statements (worst first) and their most recently opened statements (newest
-    first). Returns a dict ready for review_staff.html.
+    `last_import_date` MUST be the same value passed to build_review for this
+    review, or a staff member's "completed this week" count would disagree with the
+    main page's list. Returns a dict ready for review_staff.html, with two detail
+    lists: their Top-N most overdue statements (worst first, document-level) and
+    their N most RECENTLY overdue PROJECTS (returns grouped client-level, like the
+    Returns & Bookkeeping tab — freshest first, i.e. the ones that just crossed the
+    overdue threshold, as a "newly at-risk" complement to the worst-first list).
     """
     gen_date = generated_at.date() if hasattr(generated_at, "date") else generated_at
-    week_start = _week_start_sunday(gen_date)
+    week_start = last_import_date or _week_start_sunday(gen_date)
     who = _norm_assignee(staff_name)
 
     b = _staff_project_stats(data, week_start).get(who, {
@@ -292,29 +312,41 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
     def _mine(it: dict) -> bool:
         return _in_scope(it) and _norm_assignee(it.get("assignee")) == who
 
+    def _project_mine(p: dict) -> bool:
+        if not _owner_in_scope(p.get("client_owner")):
+            return False
+        names = {_norm_assignee(a) for a in (p.get("assignees") or [])} or {"Unassigned"}
+        names = {n for n in names if n.lower() not in EXCLUDE_ASSIGNEES}
+        return who in names
+
     overdue = sorted((it for it in data.get("overdue", []) if _mine(it)),
                      key=lambda it: (it.get("days_overdue", 0), it.get("age_days", 0)),
                      reverse=True)
     top_overdue = [_stmt_row(it, i + 1) for i, it in enumerate(overdue[:top_n])]
 
-    # Most recent = newest OPENED across all their in-scope statements (not just
-    # overdue ones); blank open-dates sort last so they never lead.
-    recent_items = sorted((it for it in data.get("items", []) if _mine(it)),
-                          key=lambda it: (_opened_iso(it) or "", it.get("age_days", 0)),
-                          reverse=True)
-    recent = [_stmt_row(it, i + 1) for i, it in enumerate(recent_items[:recent_n])]
+    # Most recently overdue PROJECTS: smallest days_overdue first, i.e. the ones
+    # that most recently crossed the overdue threshold -- a "just went overdue"
+    # alert list, distinct from top_overdue's "longest-standing problem" ordering.
+    recent_overdue_projects = sorted(
+        (p for p in data.get("projects", []) if p.get("overdue") and _project_mine(p)),
+        key=lambda p: (p["days_overdue"], p["client"].lower()))
+    recent_overdue = [
+        {"rank": i + 1, "client": p["client"], "title": _project_title_label(p),
+         "return_type": p.get("return_type", ""), "days_overdue": p["days_overdue"]}
+        for i, p in enumerate(recent_overdue_projects[:recent_n])
+    ]
 
     return {
         "firm_name": firm_name,
         "generated_at": generated_at,
         "week_start": week_start.isoformat(),
         "staff": who,
-        "found": bool(b["overdue"] or b["open"] or b["completed_week"] or recent_items),
+        "found": bool(b["overdue"] or b["open"] or b["completed_week"] or recent_overdue_projects),
         "completed_week": b["completed_week"],
         "open": b["open"],
         "open_by_type": _types_list(b["open_by_type"]),
         "overdue": b["overdue"],
         "overdue_by_type": _types_list(b["overdue_by_type"]),
         "top_overdue": top_overdue,
-        "recent": recent,
+        "recent_overdue": recent_overdue,
     }

@@ -29,6 +29,48 @@ def test_guess_mapping_picks_sensible_columns():
     assert m["title"] == "Work Title"
 
 
+def _df_with_due_date():
+    df = _df()
+    df["Due Date"] = ["2026-07-01", "2026-06-20", ""]
+    return df
+
+
+def test_guess_mapping_separates_start_and_due_date():
+    # A "Due Date" column must go to due_date, not get stolen by "date"'s
+    # generic bare "date" hint (which also has to catch a column literally
+    # named "Date" with nothing more specific).
+    cols = list(_df_with_due_date().columns)
+    m = importer.guess_mapping(cols)
+    assert m["date"] == "Start Date"
+    assert m["due_date"] == "Due Date"
+
+
+def test_guess_mapping_generic_date_hint_still_works_without_due_date():
+    # No separate due-date column: the bare "date" hint still catches a column
+    # literally named "Date" for the start-date field (regression guard for the
+    # reordering that resolves due_date first).
+    df = _df().rename(columns={"Start Date": "Date"})
+    m = importer.guess_mapping(list(df.columns))
+    assert m["date"] == "Date"
+    assert "due_date" not in m
+
+
+def test_apply_mapping_parses_due_date():
+    df = _df_with_due_date()
+    m = importer.guess_mapping(list(df.columns))
+    recs = importer.apply_mapping(df, m)
+    assert recs[0]["due_date"] == date(2026, 7, 1)
+    assert recs[2]["due_date"] is None  # empty due date -> None
+
+
+def test_apply_mapping_due_date_none_when_not_mapped():
+    # A file with no due-date column at all: every record gets due_date=None,
+    # not a KeyError -- overdue falls back to the age-based rule.
+    m = importer.guess_mapping(list(_df().columns))
+    recs = importer.apply_mapping(_df(), m)
+    assert all(r["due_date"] is None for r in recs)
+
+
 def test_apply_mapping_normalises_rows():
     m = importer.guess_mapping(list(_df().columns))
     recs = importer.apply_mapping(_df(), m)

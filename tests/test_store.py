@@ -12,7 +12,8 @@ def store(tmp_path):
     s.close()
 
 
-def _rec(key, assignee="Sarah", status="Pending", source_date=None, title="T", client="C"):
+def _rec(key, assignee="Sarah", status="Pending", source_date=None, title="T", client="C",
+         due_date=None):
     return {
         "item_key": key,
         "assignee": assignee,
@@ -20,6 +21,7 @@ def _rec(key, assignee="Sarah", status="Pending", source_date=None, title="T", c
         "title": title,
         "status": status,
         "source_date": source_date,
+        "due_date": due_date,
     }
 
 
@@ -52,6 +54,33 @@ def test_source_date_used_as_first_seen(store):
     store.upsert_items([_rec("id:1", source_date=src)], date(2026, 6, 1))
     items = store.active_items()
     assert items[0]["first_seen"] == src
+
+
+def test_due_date_roundtrips(store):
+    due = date(2026, 7, 15)
+    store.upsert_items([_rec("id:1", due_date=due)], date(2026, 6, 1))
+    items = store.active_items()
+    assert items[0]["due_date"] == due
+
+
+def test_due_date_none_when_not_provided(store):
+    store.upsert_items([_rec("id:1")], date(2026, 6, 1))
+    assert store.active_items()[0]["due_date"] is None
+
+
+def test_due_date_kept_when_reimport_omits_it(store):
+    # A re-import that doesn't map/carry a due date must not wipe a previously
+    # known one -- mirrors the existing source_date COALESCE behavior.
+    due = date(2026, 7, 15)
+    store.upsert_items([_rec("id:1", due_date=due)], date(2026, 6, 1))
+    store.upsert_items([_rec("id:1", due_date=None)], date(2026, 6, 10))
+    assert store.active_items()[0]["due_date"] == due
+
+
+def test_due_date_updates_when_reimport_provides_a_new_one(store):
+    store.upsert_items([_rec("id:1", due_date=date(2026, 7, 15))], date(2026, 6, 1))
+    store.upsert_items([_rec("id:1", due_date=date(2026, 7, 22))], date(2026, 6, 10))
+    assert store.active_items()[0]["due_date"] == date(2026, 7, 22)
 
 
 def test_imports_are_additive_and_keep_vanished_items(store):

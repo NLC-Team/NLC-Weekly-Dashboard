@@ -33,6 +33,22 @@ def is_hidden_item(assignee, client, title) -> bool:
         return False
     return bool(_HIDDEN_ITEM_RE.search(f"{client or ''} {title or ''}"))
 
+# Former/inactive staff whose few remaining documents should still count
+# everywhere on the dashboard (Overview, Overdue, Returns, Weekly Review, staff
+# dropdowns), just relabeled "Unassigned" rather than shown under their own
+# name. Matched case-insensitively, trimmed. Add a name here rather than
+# deleting/reassigning their documents.
+UNASSIGNED_STAFF_NAMES = {"clara bexley", "noor rahimi", "ivy fenwick"}
+
+
+def normalize_assignee(assignee: str) -> str:
+    """The assignee value every view should see: "Unassigned" in place of a
+    name in UNASSIGNED_STAFF_NAMES, otherwise `assignee` unchanged. Applied
+    once at the single source every view reads from (service.dashboard_data)."""
+    if (assignee or "").strip().lower() in UNASSIGNED_STAFF_NAMES:
+        return "Unassigned"
+    return assignee
+
 # The firm's display name, used as the heading of the weekly review (and anywhere
 # else the firm needs naming). Kept here so it changes in one place.
 FIRM_NAME = "NLC Financial"
@@ -63,7 +79,8 @@ LOGICAL_FIELDS = [
     ("client_owner", "Client owner / partner", False),
     ("title", "Document / work title", True),
     ("status", "Status", True),
-    ("date", "Start / created / due date", False),
+    ("date", "Start / created / opened date", False),
+    ("due_date", "Due date", False),
     ("item_id", "Karbon work ID (stable key)", False),
     ("project", "Return / project (groups documents)", False),
     ("return_type", "Return type (1040, 1120, ...)", False),
@@ -112,6 +129,25 @@ def default_data_dir() -> Path:
 
 def default_db_path() -> Path:
     return default_data_dir() / "dashboard.db"
+
+
+def default_import_upload_dir() -> Path:
+    """Where an uploaded import file waits between "Upload" and "Run import".
+
+    Deliberately NOT the OS temp dir: on this deployment (Remote Desktop
+    Services), `tempfile.gettempdir()` resolves to a numbered per-session
+    folder that can become invalid mid-wizard (e.g. if the app process
+    restarts) -- silently vanishing the file the user just uploaded. This
+    folder lives under the same stable per-user app-data directory as the
+    database, so it survives process restarts.
+    """
+    d = default_data_dir() / "import_uploads"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def default_log_path() -> Path:
+    return default_data_dir() / "app.log"
 
 
 def _app_config_path() -> Path:

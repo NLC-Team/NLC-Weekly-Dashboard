@@ -30,3 +30,20 @@ def test_whole_word_only_no_false_hits():
 
 def test_jpg_non_property_items_visible():
     assert not config.is_hidden_item(JPG, "Acme Corp", "2024 Individual Tax Return")
+
+
+def test_former_staff_normalized_to_unassigned():
+    for name in ("Clara Bexley", "Noor Rahimi", "Ivy Fenwick"):
+        assert config.normalize_assignee(name) == "Unassigned"
+
+
+def test_former_staff_case_insensitive_and_trimmed():
+    assert config.normalize_assignee("  clara bexley  ") == "Unassigned"
+    assert config.normalize_assignee("Noor Rahimi") == "Unassigned"
+
+
+def test_other_staff_names_unchanged():
+    assert config.normalize_assignee("Dana Whitfield") == "Dana Whitfield"
+    assert config.normalize_assignee("(unassigned)") == "(unassigned)"
+    assert config.normalize_assignee("") == ""
+    assert config.normalize_assignee(None) is None

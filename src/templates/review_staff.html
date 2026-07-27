@@ -92,10 +92,10 @@
     </div>
   </div>
 
-  <!-- Most recent 10 (newest opened) -->
+  <!-- Most recently overdue projects (just crossed the overdue threshold) -->
   <div class="card" style="margin:0">
-    <div class="card-title">10 most recent statements
-      <span class="text-muted" style="font-weight:400;font-size:13px">(newest opened)</span>
+    <div class="card-title">10 most recently overdue projects
+      <span class="text-muted" style="font-weight:400;font-size:13px">(just went overdue)</span>
     </div>
     <div class="table-wrap">
       <table>
@@ -103,21 +103,21 @@
           <tr>
             <th style="width:32px">#</th>
             <th>Client</th>
-            <th>Document / work</th>
-            <th style="text-align:right">Opened</th>
+            <th>Return type</th>
+            <th style="text-align:right">Days overdue</th>
           </tr>
         </thead>
         <tbody>
-          {% for r in staff.recent %}
+          {% for r in staff.recent_overdue %}
           <tr>
             <td style="font-weight:700;color:var(--navy)">{{ r.rank }}</td>
             <td style="font-weight:600">{{ r.client }}</td>
-            <td class="text-muted">{{ r.title }}</td>
-            <td style="text-align:right;white-space:nowrap">{{ r.opened }}</td>
+            <td class="text-muted">{{ r.return_type }}</td>
+            <td style="font-weight:700;text-align:right">{{ r.days_overdue }}</td>
           </tr>
           {% else %}
           <tr><td colspan="4" style="text-align:center;padding:24px;color:var(--muted)">
-            No statements for this staff member.
+            Nothing recently overdue for this staff member.
           </td></tr>
           {% endfor %}
         </tbody>

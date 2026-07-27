@@ -7,6 +7,6 @@
    partials. #}
 {% from "_project_row.html" import project_row %}
 <table><tbody id="returnsBody">
-{% if selected %}{{ project_row(selected, selected, filter_type, show_done, sel_year, sel_month) }}{% endif %}
+{% if selected %}{{ project_row(selected, selected, filter_type, view, sel_year, sel_month) }}{% endif %}
 </tbody></table>
 <div id="detailPanel">{% include "_project_detail.html" %}</div>

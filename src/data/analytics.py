@@ -20,6 +20,28 @@ from typing import Iterable
 from config import AGE_BUCKETS, normalize_return_type
 
 
+def status_is_done(status) -> bool:
+    """True when a document is genuinely COMPLETED.
+
+    Matches ONLY the exact status "Completed" (case-insensitive, trimmed). A
+    "Completed - *" variant (Cancelled, Not a fit, Billed, ...) does NOT count as
+    done -- those are "closed for another reason", see status_is_closed_other.
+    Blank/None -> not done.
+    """
+    return (status or "").strip().lower() == "completed"
+
+
+def status_is_closed_other(status) -> bool:
+    """True for a "Completed - <something>" status (Cancelled, Not a fit, Billed).
+
+    These contain the word "completed" but are not the plain "Completed" that
+    means the work was finished. They are closed out (no longer action-needed)
+    but are counted separately from real completions.
+    """
+    s = (status or "").strip().lower()
+    return "completed" in s and s != "completed"
+
+
 def item_age_days(item: dict, today: date) -> int:
     """Days an item has been open.
 
@@ -35,18 +57,31 @@ def item_age_days(item: dict, today: date) -> int:
 def enrich_items(items: Iterable[dict], today: date, overdue_days: int) -> list[dict]:
     """Return copies of items with `age_days`, `overdue`, and `days_overdue` filled in.
 
-    `days_overdue` is how many days past the overdue threshold an item is
-    (`age_days - overdue_days`, never negative). Because it derives from
-    `age_days`, which is measured against `today`, it advances by one every
-    calendar day the item stays open — it's not frozen at import time.
+    Overdue is judged from the document's own DUE DATE (the export's start date
+    to due date span) when the import provided one: a document goes overdue the
+    day `today` reaches its `due_date`, and `days_overdue` is `today - due_date`
+    (never negative). A document with no due date falls back to the age-based
+    rule -- `age_days` (from the start/source date) past the configurable
+    `overdue_days` threshold -- so nothing regresses for rows the export doesn't
+    date. Either way it's recomputed live against `today` every load, so a
+    document flips into (or out of) overdue as the calendar moves, not frozen at
+    import time. Status is checked separately, upstream (service.dashboard_data):
+    a completed/received/closed document is folded out of overdue regardless of
+    its due date.
     """
     out = []
     for it in items:
         age = item_age_days(it, today)
         enriched = dict(it)
         enriched["age_days"] = age
-        enriched["overdue"] = age > overdue_days
-        enriched["days_overdue"] = max(0, age - overdue_days)
+        due = it.get("due_date")
+        if due is not None:
+            days_over = (today - due).days
+            enriched["overdue"] = days_over >= 0
+            enriched["days_overdue"] = max(0, days_over)
+        else:
+            enriched["overdue"] = age > overdue_days
+            enriched["days_overdue"] = max(0, age - overdue_days)
         out.append(enriched)
     return out
 
@@ -131,10 +166,41 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
         if not rtype:
             raw = next((d.get("return_type_raw") for d in docs if d.get("return_type_raw")), None)
             rtype = normalize_return_type(raw)
-        completed = bool(state.get("completed", False))
+        manual_or_import_complete = bool(state.get("completed", False))
+        # A human clicking "Complete" always means a real completion. An
+        # import-completion does NOT get the same free pass: apply_import_completion
+        # auto-completes a client once every doc's status is in the configured
+        # "Completed statuses" list, which includes "Completed - <word>" variants --
+        # so an all-closed-other client gets auto-completed on every import too. That
+        # must not promote it into the real Completed bucket (see per-doc check below).
+        manual_complete = manual_or_import_complete and state.get("completed_source") == "manual"
         # Owner of the client (first non-empty across the return's docs) and when it
         # was completed — used by the Weekly Review's "completed this week" section.
         client_owner = next((d.get("client_owner") for d in docs if d.get("client_owner")), None)
+
+        # Bucket the return: OPEN while any document still needs action; else
+        # COMPLETED when every finished document is a real completion (exact
+        # "Completed" / received / hand-completed); else CLOSED-OTHER, i.e. it was
+        # closed out only via a "Completed - <word>" status (Cancelled / Not a fit /
+        # Billed). Only a MANUAL project completion always reads as completed.
+        has_open = has_closed_other = False
+        for d in docs:
+            recv = bool(doc_states.get(d["item_key"], False))
+            if status_is_done(d["status"]) or recv or manual_complete:
+                continue                      # a real completion
+            if status_is_closed_other(d["status"]):
+                has_closed_other = True
+            elif not manual_or_import_complete:
+                has_open = True
+            # else: import-completed via a status this helper doesn't recognize as
+            # done/closed-other -- apply_import_completion only sets this flag when
+            # every doc's status is in the configured list, so treat it as done.
+        if manual_complete or not (has_open or has_closed_other):
+            completed, closed_other = True, False
+        elif has_open:
+            completed, closed_other = False, False
+        else:
+            completed, closed_other = False, True
 
         doc_rows = []
         received_count = 0
@@ -159,11 +225,14 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
         # Responsible employee(s): a return can span docs owned by different
         # staff, so keep the full de-duplicated list plus a compact label. The
         # importer stores a missing assignee as the literal "(unassigned)"
-        # (importer.py), so treat that as unassigned too and normalize to a
-        # single "Unassigned" label (rendered as plain text, never a link).
+        # (importer.py); service.dashboard_data normalizes former/inactive staff
+        # (config.UNASSIGNED_STAFF_NAMES) to "Unassigned" before this runs --
+        # treat both as unassigned so neither shows up as a real name in a
+        # multi-assignee project, and default to a single "Unassigned" label
+        # (rendered as plain text, never a link) when nothing real is left.
         assignees = sorted({a for d in docs
                             for a in [(d.get("assignee") or "").strip()]
-                            if a and a.lower() != "(unassigned)"})
+                            if a and a.lower() not in ("(unassigned)", "unassigned")})
         if not assignees:
             assignees = ["Unassigned"]
         assignee_label = (", ".join(assignees) if len(assignees) <= 2
@@ -187,8 +256,9 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
                 "opened_year": opened_on.year if opened_on else None,
                 "opened_month": opened_on.month if opened_on else None,
                 "completed": completed,
+                "closed_other": closed_other,
                 "completed_at": state.get("completed_at"),
-                "open": not completed,
+                "open": not (completed or closed_other),
                 "documents": doc_rows,
                 "total_docs": len(doc_rows),
                 "received_docs": received_count,
@@ -202,10 +272,17 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
                 # "mark a document -> client Open" rule (received also reopens a
                 # closed client, see store.set_received).
                 "overdue": received_count == 0 and any(d["overdue"] for d in doc_rows),
+                # How long the project itself has read as overdue, driven by its
+                # WORST (most overdue) document — mirrors `days_open` using max(),
+                # since a single old document is what put the whole client into
+                # Overdue in the first place, however fresh its other documents are.
+                "days_overdue": max((d.get("days_overdue", 0) for d in docs if d.get("overdue")),
+                                   default=0),
             }
         )
 
-    projects.sort(key=lambda p: (p["completed"], p["client"].lower()))
+    # Open returns first, then completed, then closed-other; alphabetical within each.
+    projects.sort(key=lambda p: (not p["open"], p["closed_other"], p["client"].lower()))
     return projects
 
 
@@ -227,6 +304,7 @@ def project_totals(projects: list[dict]) -> dict:
         "by_type": by_type,
         "type_count": len(by_type),
         "completed_total": sum(1 for p in projects if p["completed"]),
+        "closed_other_total": sum(1 for p in projects if p.get("closed_other")),
         "avg_pct_complete": round(sum(pcts) / len(pcts)) if pcts else 0,
         "docs_outstanding": sum(p["outstanding_docs"] for p in open_projects),
     }

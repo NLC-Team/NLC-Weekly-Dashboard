@@ -4,11 +4,11 @@
    by projects.html (the full list) and projects_ajax.html (the single selected
    row synced back after a doc-tick), so the markup — and crucially the data-href
    syncRow() matches on — is defined once and can never drift. #}
-{% macro project_row(p, selected, filter_type, show_done, sel_year, sel_month) -%}
+{% macro project_row(p, selected, filter_type, view, sel_year, sel_month) -%}
 {% set is_sel = selected and p.project_key == selected.project_key %}
-<tr class="project-row {{ 'selected' if is_sel }} {{ 'done' if p.completed }} {{ 'overdue' if p.overdue and not p.completed }}"
+<tr class="project-row {{ 'selected' if is_sel }} {{ 'done' if p.completed or p.closed_other }} {{ 'overdue' if p.overdue and not p.completed }}"
     data-client="{{ p.client | lower }}"
-    data-href="{{ url_for('projects', pkey=p.project_key, filter=filter_type, done=('1' if show_done else '0'), year=sel_year, month=sel_month) }}">
+    data-href="{{ url_for('projects', pkey=p.project_key, filter=filter_type, done=view, year=sel_year, month=sel_month) }}">
   <td style="font-weight:600">{{ p.client }}</td>
   <td>
     {%- for a in p.assignees[:2] -%}
@@ -23,7 +23,8 @@
   <td>{{ p.received_docs }}/{{ p.total_docs }}</td>
   <td>{{ p.days_open }}</td>
   <td>
-    {% if p.completed %}<span class="badge badge-done">Closed</span>
+    {% if p.completed %}<span class="badge badge-done">Completed</span>
+    {% elif p.closed_other %}<span class="badge badge-done">Completed – other</span>
     {% elif p.overdue %}<span class="badge badge-overdue">Overdue</span>
     {% else %}<span class="badge badge-open">Open</span>{% endif %}
   </td>
