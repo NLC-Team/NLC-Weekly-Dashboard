@@ -1306,24 +1306,51 @@ def project_delete():
 @login_required
 def overdue():
     data = _get_data()
-    by_person: dict[str, list] = {}
-    for it in data["overdue"]:
-        by_person.setdefault(it["assignee"], []).append(it)
-    # Alphabetical by staff member; each person's items worst-first, where
-    # "worst" = most days overdue (past the threshold), not just longest open.
-    ranked = sorted(
-        ((person, sorted(items, key=lambda x: x["days_overdue"], reverse=True))
-         for person, items in by_person.items()),
-        key=lambda kv: kv[0].lower(),
-    )
-    worst = {person: items[0] for person, items in ranked}
+    view = request.args.get("view", "overdue")
+    if view not in ("overdue", "completed"):
+        view = "overdue"
+
+    completed_items = [it for it in data["items"] if it["completed"]]
+
+    def _group(items):
+        grouped: dict[str, list] = {}
+        for it in items:
+            grouped.setdefault(it["assignee"], []).append(it)
+        return grouped
+
+    if view == "completed":
+        by_person = _group(completed_items)
+        # Alphabetical by staff member; each person's items alphabetical by
+        # client -- there's no reliable per-document completion date to rank
+        # by (age_days keeps counting from when a doc was opened even after
+        # it's closed), so client name is the most scannable order.
+        ranked = sorted(
+            ((person, sorted(items, key=lambda x: x["client"].lower()))
+             for person, items in by_person.items()),
+            key=lambda kv: kv[0].lower(),
+        )
+        worst = {}
+    else:
+        by_person = _group(data["overdue"])
+        # Alphabetical by staff member; each person's items worst-first, where
+        # "worst" = most days overdue (past the threshold), not just longest open.
+        ranked = sorted(
+            ((person, sorted(items, key=lambda x: x["days_overdue"], reverse=True))
+             for person, items in by_person.items()),
+            key=lambda kv: kv[0].lower(),
+        )
+        worst = {person: items[0] for person, items in ranked}
+
     # Optional ?person= deep-link (from clicking an employee's name). Ignore an
-    # unknown name / someone with no overdue items so the page never lands empty.
+    # unknown name / someone with no items in this view so the page never
+    # lands empty.
     selected_person = request.args.get("person", "")
     if selected_person not in by_person:
         selected_person = ""
     return render_template("overdue.html",
+                           view=view,
                            overdue_items=data["overdue"],
+                           completed_items=completed_items,
                            overdue_days=_overdue_days(),
                            ranked=ranked, worst=worst,
                            selected_person=selected_person)
