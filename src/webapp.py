@@ -1318,14 +1318,31 @@ def overdue():
             grouped.setdefault(it["assignee"], []).append(it)
         return grouped
 
+    def _owner_groups(items):
+        """Split one staff member's (already-sorted) items into sub-groups by
+        client owner (the relationship partner, distinct from the assignee),
+        preserving each item's relative order within its owner's bucket.
+        Named owners alphabetically; items with no owner set trail as
+        "No owner"."""
+        buckets: dict[str, list] = {}
+        for it in items:
+            owner = (it.get("client_owner") or "").strip()
+            buckets.setdefault(owner, []).append(it)
+        named = sorted((o for o in buckets if o), key=str.lower)
+        groups = [(o, buckets[o]) for o in named]
+        if "" in buckets:
+            groups.append(("No owner", buckets[""]))
+        return groups
+
     if view == "completed":
         by_person = _group(completed_items)
         # Alphabetical by staff member; each person's items alphabetical by
         # client -- there's no reliable per-document completion date to rank
         # by (age_days keeps counting from when a doc was opened even after
         # it's closed), so client name is the most scannable order.
+        counts = {person: len(items) for person, items in by_person.items()}
         ranked = sorted(
-            ((person, sorted(items, key=lambda x: x["client"].lower()))
+            ((person, _owner_groups(sorted(items, key=lambda x: x["client"].lower())))
              for person, items in by_person.items()),
             key=lambda kv: kv[0].lower(),
         )
@@ -1334,12 +1351,14 @@ def overdue():
         by_person = _group(data["overdue"])
         # Alphabetical by staff member; each person's items worst-first, where
         # "worst" = most days overdue (past the threshold), not just longest open.
+        counts = {person: len(items) for person, items in by_person.items()}
+        sorted_by_person = {person: sorted(items, key=lambda x: x["days_overdue"], reverse=True)
+                             for person, items in by_person.items()}
+        worst = {person: items[0] for person, items in sorted_by_person.items()}
         ranked = sorted(
-            ((person, sorted(items, key=lambda x: x["days_overdue"], reverse=True))
-             for person, items in by_person.items()),
+            ((person, _owner_groups(items)) for person, items in sorted_by_person.items()),
             key=lambda kv: kv[0].lower(),
         )
-        worst = {person: items[0] for person, items in ranked}
 
     # Optional ?person= deep-link (from clicking an employee's name). Ignore an
     # unknown name / someone with no items in this view so the page never
@@ -1352,6 +1371,7 @@ def overdue():
                            overdue_items=data["overdue"],
                            completed_items=completed_items,
                            overdue_days=_overdue_days(),
+                           counts=counts,
                            ranked=ranked, worst=worst,
                            selected_person=selected_person)
 

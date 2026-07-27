@@ -28,8 +28,8 @@
   <label style="margin-bottom:0">Staff member</label>
   <select id="staffPicker" style="min-width:240px">
     <option value="__all__" {{ 'selected' if not selected_person }}>All staff ({{ completed_items|length }})</option>
-    {% for person, items in ranked %}
-    <option value="{{ person }}" {{ 'selected' if person == selected_person }}>{{ person }} ({{ items|length }})</option>
+    {% for person, owner_groups in ranked %}
+    <option value="{{ person }}" {{ 'selected' if person == selected_person }}>{{ person }} ({{ counts[person] }})</option>
     {% endfor %}
   </select>
 
@@ -54,22 +54,29 @@
         <th>Days open</th>
       </tr>
     </thead>
-    {% for person, items in ranked %}
+    {% for person, owner_groups in ranked %}
     <tbody class="staff-group" data-person="{{ person }}"{% if selected_person and person != selected_person %} style="display:none"{% endif %}>
       <tr class="group-head">
         <td colspan="4" style="background:var(--bg);font-weight:800;color:var(--text);padding:12px 14px">
           <a href="{{ url_for('overdue', view='completed', person=person) }}" style="color:var(--text);text-decoration:none">{{ person }}</a>
-          <span class="text-muted" style="font-weight:600;font-size:12px"> — {{ items|length }} completed</span>
+          <span class="text-muted" style="font-weight:600;font-size:12px"> — {{ counts[person] }} completed</span>
+        </td>
+      </tr>
+      {% for owner, items in owner_groups %}
+      <tr class="owner-head" data-owner-group="{{ owner }}">
+        <td colspan="4" style="padding:7px 14px 7px 28px;font-weight:700;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.03em">
+          {{ owner }} <span style="font-weight:600">— {{ items|length }}</span>
         </td>
       </tr>
       {% for it in items %}
-      <tr class="overdue" data-search="{{ (it.client ~ ' ' ~ it.title ~ ' ' ~ it.status) | lower }}">
+      <tr class="overdue" data-owner-group="{{ owner }}" data-search="{{ (it.client ~ ' ' ~ it.title ~ ' ' ~ it.status) | lower }}">
         <td><a href="{{ url_for('projects', pkey=it.project_key) }}" style="color:var(--accent);font-weight:600;text-decoration:none"
                title="Open {{ it.client }} in Returns &amp; Bookkeeping">{{ it.client }}</a></td>
         <td style="font-weight:600">{{ it.title }}</td>
         <td>{{ it.status }}</td>
         <td style="font-weight:700">{{ it.age_days }}</td>
       </tr>
+      {% endfor %}
       {% endfor %}
     </tbody>
     {% endfor %}
@@ -90,10 +97,17 @@ function applyFilters() {
       return;
     }
     let groupVisible = 0;
+    const ownerVisible = {};
     tb.querySelectorAll('tr.overdue').forEach(function (row) {
       const match = !term || (row.dataset.search || '').includes(term);
       row.style.display = match ? '' : 'none';
-      if (match) groupVisible++;
+      if (match) {
+        groupVisible++;
+        ownerVisible[row.dataset.ownerGroup] = true;
+      }
+    });
+    tb.querySelectorAll('tr.owner-head').forEach(function (row) {
+      row.style.display = ownerVisible[row.dataset.ownerGroup] ? '' : 'none';
     });
     tb.style.display = groupVisible ? '' : 'none';
     totalVisible += groupVisible;
@@ -122,9 +136,9 @@ document.getElementById('overdueSearch').addEventListener('input', applyFilters)
 {% else %}
 <div class="banner banner-warn">
   <div class="banner-warn-title">Action needed — most overdue item per person:</div>
-  {% for person, items in ranked %}
+  {% for person, owner_groups in ranked %}
   <div class="banner-item">
-    • <a href="{{ url_for('overdue', person=person) }}" style="color:inherit"><strong>{{ person }}</strong></a>: {{ items|length }} overdue — most overdue: <strong>{{ worst[person].client }}</strong> ({{ worst[person].days_overdue }} day{{ '' if worst[person].days_overdue == 1 else 's' }} overdue)
+    • <a href="{{ url_for('overdue', person=person) }}" style="color:inherit"><strong>{{ person }}</strong></a>: {{ counts[person] }} overdue — most overdue: <strong>{{ worst[person].client }}</strong> ({{ worst[person].days_overdue }} day{{ '' if worst[person].days_overdue == 1 else 's' }} overdue)
   </div>
   {% endfor %}
 </div>
@@ -134,8 +148,8 @@ document.getElementById('overdueSearch').addEventListener('input', applyFilters)
   <label style="margin-bottom:0">Staff member</label>
   <select id="staffPicker" style="min-width:240px">
     <option value="__all__" {{ 'selected' if not selected_person }}>All staff ({{ overdue_items|length }})</option>
-    {% for person, items in ranked %}
-    <option value="{{ person }}" {{ 'selected' if person == selected_person }}>{{ person }} ({{ items|length }})</option>
+    {% for person, owner_groups in ranked %}
+    <option value="{{ person }}" {{ 'selected' if person == selected_person }}>{{ person }} ({{ counts[person] }})</option>
     {% endfor %}
   </select>
 
@@ -161,16 +175,22 @@ document.getElementById('overdueSearch').addEventListener('input', applyFilters)
         <th>Days overdue</th>
       </tr>
     </thead>
-    {% for person, items in ranked %}
+    {% for person, owner_groups in ranked %}
     <tbody class="staff-group" data-person="{{ person }}"{% if selected_person and person != selected_person %} style="display:none"{% endif %}>
       <tr class="group-head">
         <td colspan="5" style="background:var(--bg);font-weight:800;color:var(--text);padding:12px 14px">
           <a href="{{ url_for('overdue', person=person) }}" style="color:var(--text);text-decoration:none">{{ person }}</a>
-          <span class="text-muted" style="font-weight:600;font-size:12px"> — {{ items|length }} overdue</span>
+          <span class="text-muted" style="font-weight:600;font-size:12px"> — {{ counts[person] }} overdue</span>
+        </td>
+      </tr>
+      {% for owner, items in owner_groups %}
+      <tr class="owner-head" data-owner-group="{{ owner }}">
+        <td colspan="5" style="padding:7px 14px 7px 28px;font-weight:700;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.03em">
+          {{ owner }} <span style="font-weight:600">— {{ items|length }}</span>
         </td>
       </tr>
       {% for it in items %}
-      <tr class="overdue" data-search="{{ (it.client ~ ' ' ~ it.title ~ ' ' ~ it.status) | lower }}">
+      <tr class="overdue" data-owner-group="{{ owner }}" data-search="{{ (it.client ~ ' ' ~ it.title ~ ' ' ~ it.status) | lower }}">
         <td><a href="{{ url_for('projects', pkey=it.project_key) }}" style="color:var(--accent);font-weight:600;text-decoration:none"
                title="Open {{ it.client }} in Returns &amp; Bookkeeping">{{ it.client }}</a></td>
         <td style="font-weight:600">{{ it.title }}</td>
@@ -178,6 +198,7 @@ document.getElementById('overdueSearch').addEventListener('input', applyFilters)
         <td style="font-weight:700">{{ it.age_days }}</td>
         <td style="font-weight:700">{{ it.days_overdue }}</td>
       </tr>
+      {% endfor %}
       {% endfor %}
     </tbody>
     {% endfor %}
@@ -190,7 +211,8 @@ document.getElementById('overdueSearch').addEventListener('input', applyFilters)
 <script nonce="{{ csp_nonce }}">
 // Staff picker + search compose: a row shows only if its staff group is
 // selected AND it matches the search text. A group whose rows are all filtered
-// out (or isn't the selected staff) is hidden entirely, header included.
+// out (or isn't the selected staff) is hidden entirely, header included. An
+// owner sub-header hides too when none of its own rows are visible.
 function applyFilters() {
   const staff = document.getElementById('staffPicker').value;
   const term = (document.getElementById('overdueSearch').value || '').trim().toLowerCase();
@@ -201,10 +223,17 @@ function applyFilters() {
       return;
     }
     let groupVisible = 0;
+    const ownerVisible = {};
     tb.querySelectorAll('tr.overdue').forEach(function (row) {
       const match = !term || (row.dataset.search || '').includes(term);
       row.style.display = match ? '' : 'none';
-      if (match) groupVisible++;
+      if (match) {
+        groupVisible++;
+        ownerVisible[row.dataset.ownerGroup] = true;
+      }
+    });
+    tb.querySelectorAll('tr.owner-head').forEach(function (row) {
+      row.style.display = ownerVisible[row.dataset.ownerGroup] ? '' : 'none';
     });
     tb.style.display = groupVisible ? '' : 'none';
     totalVisible += groupVisible;
