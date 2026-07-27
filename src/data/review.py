@@ -102,7 +102,13 @@ def _stmt_row(it: dict, rank: int) -> dict:
 def _project_title_label(p: dict) -> str:
     """A return can bundle several documents (grouping is client-level, see
     analytics.build_projects) with different titles, e.g. "1040 Return" +
-    "State Return" -- join them the same way assignee_label joins staff names."""
+    "State Return" -- join them the same way assignee_label joins staff names.
+
+    build_projects precomputes this as `title_label`; recompute it only for
+    callers (tests) that hand us a bare project dict without one."""
+    label = p.get("title_label")
+    if label:
+        return label
     titles = sorted({d["title"].strip() for d in (p.get("documents") or [])
                      if d.get("title", "").strip()})
     return (", ".join(titles) if len(titles) <= 2

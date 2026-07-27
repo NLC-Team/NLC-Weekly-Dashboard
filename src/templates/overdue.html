@@ -2,7 +2,8 @@
 {% block content %}
 <h1>Overdue statements</h1>
 {% if view == 'completed' %}
-<p class="subtitle">{{ completed_items|length }} statement(s) completed, all time.</p>
+<p class="subtitle">{{ completed_total }} client(s) fully completed, all time — counted once per client,
+  however many documents the client had.</p>
 {% else %}
 <p class="subtitle">{{ overdue_items|length }} item(s) open more than {{ overdue_days }} days.</p>
 {% endif %}
@@ -12,7 +13,7 @@
     Overdue ({{ overdue_items|length }})
   </a>
   <a class="chip {{ 'active' if view == 'completed' }}" href="{{ url_for('overdue', view='completed') }}">
-    Completed ({{ completed_items|length }})
+    Completed ({{ completed_total }})
   </a>
 </div>
 
@@ -20,14 +21,14 @@
 
 {% if not ranked %}
 <div class="banner banner-ok">
-  <span class="banner-ok-text">No completed statements yet.</span>
+  <span class="banner-ok-text">No completed clients yet.</span>
 </div>
 {% else %}
 <!-- Employee picker + search -->
 <div class="row mb-2" style="gap:12px;align-items:center;flex-wrap:wrap">
   <label style="margin-bottom:0">Staff member</label>
   <select id="staffPicker" style="min-width:240px">
-    <option value="__all__" {{ 'selected' if not selected_person }}>All staff ({{ completed_items|length }})</option>
+    <option value="__all__" {{ 'selected' if not selected_person }}>All staff ({{ completed_total }})</option>
     {% for person, owner_groups in ranked %}
     <option value="{{ person }}" {{ 'selected' if person == selected_person }}>{{ person }} ({{ counts[person] }})</option>
     {% endfor %}
@@ -50,7 +51,7 @@
       <tr>
         <th>Client</th>
         <th>Document / work</th>
-        <th>Status</th>
+        <th>Documents</th>
         <th>Days open</th>
       </tr>
     </thead>
@@ -62,19 +63,19 @@
           <span class="text-muted" style="font-weight:600;font-size:12px"> — {{ counts[person] }} completed</span>
         </td>
       </tr>
-      {% for owner, items in owner_groups %}
+      {% for owner, rows in owner_groups %}
       <tr class="owner-head" data-owner-group="{{ owner }}">
         <td colspan="4" style="padding:7px 14px 7px 28px;font-weight:700;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.03em">
-          {{ owner }} <span style="font-weight:600">— {{ items|length }}</span>
+          {{ owner }} <span style="font-weight:600">— {{ rows|length }}</span>
         </td>
       </tr>
-      {% for it in items %}
-      <tr class="overdue" data-owner-group="{{ owner }}" data-search="{{ (it.client ~ ' ' ~ it.title ~ ' ' ~ it.status) | lower }}">
-        <td><a href="{{ url_for('projects', pkey=it.project_key) }}" style="color:var(--accent);font-weight:600;text-decoration:none"
-               title="Open {{ it.client }} in Returns &amp; Bookkeeping">{{ it.client }}</a></td>
-        <td style="font-weight:600">{{ it.title }}</td>
-        <td>{{ it.status }}</td>
-        <td style="font-weight:700">{{ it.age_days }}</td>
+      {% for p in rows %}
+      <tr class="overdue" data-owner-group="{{ owner }}" data-search="{{ (p.client ~ ' ' ~ p.title_label) | lower }}">
+        <td><a href="{{ url_for('projects', pkey=p.project_key, done='1') }}" style="color:var(--accent);font-weight:600;text-decoration:none"
+               title="Open {{ p.client }} in Returns &amp; Bookkeeping">{{ p.client }}</a></td>
+        <td style="font-weight:600">{{ p.title_label }}</td>
+        <td style="font-weight:700">{{ p.total_docs }}</td>
+        <td style="font-weight:700">{{ p.days_open }}</td>
       </tr>
       {% endfor %}
       {% endfor %}
@@ -82,7 +83,7 @@
     {% endfor %}
   </table>
   <div id="noResults" style="display:none;text-align:center;padding:24px;color:var(--muted);font-size:13px">
-    No completed statements match your search.
+    No completed clients match your search.
   </div>
 </div>
 

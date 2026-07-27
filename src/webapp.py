@@ -48,7 +48,7 @@ import config
 import mailer
 import review_pdf
 import vault
-from data import importer, review, service
+from data import analytics, importer, review, service
 from data.store import Store
 
 # The app normally runs as a windowless pythonw.exe (no console), so the
@@ -1310,45 +1310,29 @@ def overdue():
     if view not in ("overdue", "completed"):
         view = "overdue"
 
-    completed_items = [it for it in data["items"] if it["completed"]]
-
-    def _group(items):
-        grouped: dict[str, list] = {}
-        for it in items:
-            grouped.setdefault(it["assignee"], []).append(it)
-        return grouped
-
-    def _owner_groups(items):
-        """Split one staff member's (already-sorted) items into sub-groups by
-        client owner (the relationship partner, distinct from the assignee),
-        preserving each item's relative order within its owner's bucket.
-        Named owners alphabetically; items with no owner set trail as
-        "No owner"."""
-        buckets: dict[str, list] = {}
-        for it in items:
-            owner = (it.get("client_owner") or "").strip()
-            buckets.setdefault(owner, []).append(it)
-        named = sorted((o for o in buckets if o), key=str.lower)
-        groups = [(o, buckets[o]) for o in named]
-        if "" in buckets:
-            groups.append(("No owner", buckets[""]))
-        return groups
+    # Completed is counted per CLIENT (return), not per document: a client that
+    # finished several documents is one completed return, and only a client whose
+    # work is genuinely all done counts -- see analytics.completed_projects_by_assignee.
+    completed_total = data["project_totals"]["completed_total"]
 
     if view == "completed":
-        by_person = _group(completed_items)
-        # Alphabetical by staff member; each person's items alphabetical by
-        # client -- there's no reliable per-document completion date to rank
-        # by (age_days keeps counting from when a doc was opened even after
-        # it's closed), so client name is the most scannable order.
-        counts = {person: len(items) for person, items in by_person.items()}
+        by_person = analytics.completed_projects_by_assignee(data["projects"])
+        # Alphabetical by staff member; each person's returns alphabetical by
+        # client -- there's no reliable per-document completion date to rank by
+        # (age_days keeps counting from when work opened even after it closes),
+        # so client name is the most scannable order.
+        counts = {person: len(rows) for person, rows in by_person.items()}
         ranked = sorted(
-            ((person, _owner_groups(sorted(items, key=lambda x: x["client"].lower())))
-             for person, items in by_person.items()),
+            ((person, analytics.group_by_client_owner(
+                sorted(rows, key=lambda p: p["client"].lower())))
+             for person, rows in by_person.items()),
             key=lambda kv: kv[0].lower(),
         )
         worst = {}
     else:
-        by_person = _group(data["overdue"])
+        by_person: dict[str, list] = {}
+        for it in data["overdue"]:
+            by_person.setdefault(it["assignee"], []).append(it)
         # Alphabetical by staff member; each person's items worst-first, where
         # "worst" = most days overdue (past the threshold), not just longest open.
         counts = {person: len(items) for person, items in by_person.items()}
@@ -1356,7 +1340,8 @@ def overdue():
                              for person, items in by_person.items()}
         worst = {person: items[0] for person, items in sorted_by_person.items()}
         ranked = sorted(
-            ((person, _owner_groups(items)) for person, items in sorted_by_person.items()),
+            ((person, analytics.group_by_client_owner(items))
+             for person, items in sorted_by_person.items()),
             key=lambda kv: kv[0].lower(),
         )
 
@@ -1369,7 +1354,7 @@ def overdue():
     return render_template("overdue.html",
                            view=view,
                            overdue_items=data["overdue"],
-                           completed_items=completed_items,
+                           completed_total=completed_total,
                            overdue_days=_overdue_days(),
                            counts=counts,
                            ranked=ranked, worst=worst,

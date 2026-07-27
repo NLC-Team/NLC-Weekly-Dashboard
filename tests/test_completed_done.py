@@ -10,7 +10,7 @@ Rules (service.dashboard_data + analytics.build_projects):
 """
 from datetime import date, timedelta
 
-from data import service
+from data import analytics, service
 from data.store import Store
 
 TODAY = date(2026, 6, 29)
@@ -150,3 +150,71 @@ def test_items_list_keeps_all_rows(tmp_path):
         assert len(data["items"]) == 7
     finally:
         s.close()
+
+
+# ---- completed is counted per CLIENT, never per document -------------------
+def test_completed_counted_once_per_client(tmp_path):
+    # A client that finished SEVERAL documents is ONE completed return, not one
+    # per document -- the rule the whole dashboard and Weekly Review share.
+    s = _build(tmp_path)
+    try:
+        data = service.dashboard_data(s, TODAY, overdue_days=14)
+        # "Pure" has two completed documents but counts once.
+        assert len([it for it in data["items"] if it["completed"]]) > 1
+        assert data["project_totals"]["completed_total"] == 1
+        by_staff = analytics.completed_projects_by_assignee(data["projects"])
+        assert [p["client"] for p in by_staff["A"]] == ["Pure"]
+    finally:
+        s.close()
+
+
+def test_partly_finished_client_is_not_completed(tmp_path):
+    # "Mixed" has one Completed doc and one still open -> NOT a completed client.
+    # Only a client whose work is all done (or hand-completed) counts.
+    s = _build(tmp_path)
+    try:
+        data = service.dashboard_data(s, TODAY, overdue_days=14)
+        by_staff = analytics.completed_projects_by_assignee(data["projects"])
+        assert "Mixed" not in {p["client"] for p in by_staff["A"]}
+        # ...and neither does a client closed only via "Completed - <word>".
+        assert "Other" not in {p["client"] for p in by_staff["A"]}
+        assert "Cancelled" not in {p["client"] for p in by_staff["A"]}
+    finally:
+        s.close()
+
+
+def test_completed_client_listed_under_every_staff_member(tmp_path):
+    # A return worked by two people shows up once for each of them (same
+    # attribution the Weekly Review uses), still one row per client per person.
+    s = Store(tmp_path / "shared.db")
+    try:
+        recs = [_rec("s1", "Shared", "1040 Return", "Completed"),
+                _rec("s2", "Shared", "State Return", "Completed")]
+        recs[1]["assignee"] = "B"
+        s.upsert_items(recs, TODAY)
+        data = service.dashboard_data(s, TODAY, overdue_days=14)
+        by_staff = analytics.completed_projects_by_assignee(data["projects"])
+        assert [p["client"] for p in by_staff["A"]] == ["Shared"]
+        assert [p["client"] for p in by_staff["B"]] == ["Shared"]
+        # One distinct completed client firm-wide, despite two staff rows.
+        assert data["project_totals"]["completed_total"] == 1
+    finally:
+        s.close()
+
+
+def test_title_label_bundles_a_clients_documents(tmp_path):
+    s = _build(tmp_path)
+    try:
+        data = service.dashboard_data(s, TODAY, overdue_days=14)
+        p = {x["client"]: x for x in data["projects"]}["Pure"]
+        assert p["title_label"] == "1065 Return, State Return"
+    finally:
+        s.close()
+
+
+def test_group_by_client_owner_orders_named_then_unowned():
+    rows = [{"client_owner": "Zoe"}, {"client_owner": None},
+            {"client_owner": "alan"}, {"client_owner": "  "}]
+    groups = analytics.group_by_client_owner(rows)
+    assert [name for name, _ in groups] == ["alan", "Zoe", "No owner"]
+    assert len(groups[-1][1]) == 2      # None and blank share the No-owner bucket

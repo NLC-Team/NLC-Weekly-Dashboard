@@ -222,6 +222,14 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
         client = next((d["client"] for d in docs if d["client"]), "(no client)")
         days_open = max((d["age_days"] for d in docs), default=0)
 
+        # A return bundles several documents (grouping is client-level), so give
+        # it ONE label for the whole bundle -- joined the same way assignee_label
+        # joins staff names. Lets a caller show a return as a single row instead
+        # of one row per document.
+        titles = sorted({d["title"].strip() for d in doc_rows if d["title"].strip()})
+        title_label = (", ".join(titles) if len(titles) <= 2
+                       else f"{titles[0]} +{len(titles) - 1}")
+
         # Responsible employee(s): a return can span docs owned by different
         # staff, so keep the full de-duplicated list plus a compact label. The
         # importer stores a missing assignee as the literal "(unassigned)"
@@ -252,6 +260,7 @@ def build_projects(items: list[dict], doc_states: dict, project_states: dict) ->
                 "client_owner": client_owner,
                 "assignees": assignees,
                 "assignee_label": assignee_label,
+                "title_label": title_label,
                 "opened_on": opened_on,
                 "opened_year": opened_on.year if opened_on else None,
                 "opened_month": opened_on.month if opened_on else None,
@@ -308,6 +317,46 @@ def project_totals(projects: list[dict]) -> dict:
         "avg_pct_complete": round(sum(pcts) / len(pcts)) if pcts else 0,
         "docs_outstanding": sum(p["outstanding_docs"] for p in open_projects),
     }
+
+
+def group_by_client_owner(rows: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Split rows into sub-groups by client owner, preserving their given order.
+
+    Works for either documents or projects -- both carry `client_owner` (the
+    relationship partner, distinct from the assignee who does the work). Named
+    owners come first alphabetically; anything with no owner on file trails
+    under a single "No owner" group.
+    """
+    buckets: dict[str, list[dict]] = {}
+    for r in rows:
+        buckets.setdefault((r.get("client_owner") or "").strip(), []).append(r)
+    groups = [(o, buckets[o]) for o in sorted((o for o in buckets if o), key=str.lower)]
+    if "" in buckets:
+        groups.append(("No owner", buckets[""]))
+    return groups
+
+
+def completed_projects_by_assignee(projects: list[dict]) -> dict[str, list[dict]]:
+    """Completed RETURNS bucketed under each staff member who worked them.
+
+    Counted per CLIENT, not per document: a client that finished several
+    documents is ONE completed return here, because grouping is client-level
+    (see build_projects). Only genuinely-completed returns are included --
+    every document either exactly "Completed" in the import, received/ticked
+    off by hand, or the return manually marked complete -- so this matches the
+    Returns tab's "Completed" number and the Weekly Review.
+
+    A return worked by several staff is listed once under EACH of them (same
+    attribution the Weekly Review uses), so per-staff counts can add up to more
+    than the firm-wide total of distinct completed returns.
+    """
+    out: dict[str, list[dict]] = {}
+    for p in projects:
+        if not p.get("completed"):
+            continue
+        for name in (p.get("assignees") or ["Unassigned"]):
+            out.setdefault(name, []).append(p)
+    return out
 
 
 def age_distribution(items: list[dict], buckets: list[int] | None = None) -> list[tuple[str, int]]:
