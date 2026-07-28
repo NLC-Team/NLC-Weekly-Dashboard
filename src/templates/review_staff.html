@@ -28,7 +28,7 @@
   </div>
   <div class="kpi-card">
     <div class="kpi-value text-accent">{{ staff.open }}</div>
-    <div class="kpi-label">Open returns</div>
+    <div class="kpi-label">Open projects</div>
   </div>
   <div class="kpi-card {{ 'kpi-alert' if staff.overdue }}">
     <div class="kpi-value" style="color:{{ 'var(--danger)' if staff.overdue else 'var(--text)' }}">{{ staff.overdue }}</div>
@@ -36,9 +36,9 @@
   </div>
 </div>
 
-<!-- Open returns, broken out by work type (mini bar breakdown) -->
+<!-- Open projects, broken out by work type (mini bar breakdown) -->
 <div class="card mb-2">
-  <div class="card-title">Open returns by work type
+  <div class="card-title">Open projects by work type
     <span class="text-muted" style="font-weight:400;font-size:13px">({{ staff.open }} open)</span>
   </div>
   {% if staff.open_by_type %}
@@ -46,16 +46,16 @@
   <div style="display:flex;flex-direction:column;gap:8px">
     {% for t in staff.open_by_type %}
     <div style="display:grid;grid-template-columns:200px 1fr 40px;align-items:center;gap:12px">
-      <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.type }}</div>
+      <div style="font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.type }}</div>
       <div style="background:#eef1f7;border-radius:6px;height:16px;overflow:hidden">
         <div style="height:100%;background:var(--navy);border-radius:6px;width:{{ (100 * t.count / top_count)|round(1) }}%"></div>
       </div>
-      <div style="font-family:var(--serif);font-weight:700;text-align:right;font-variant-numeric:tabular-nums lining-nums">{{ t.count }}</div>
+      <div style="font-family:var(--serif);font-weight:700;font-size:18px;text-align:right;font-variant-numeric:tabular-nums lining-nums">{{ t.count }}</div>
     </div>
     {% endfor %}
   </div>
   {% else %}
-  <p class="text-muted" style="font-size:13px">No open returns.</p>
+  <p class="text-muted" style="font-size:13px">No open projects.</p>
   {% endif %}
 </div>
 

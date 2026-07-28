@@ -7,9 +7,9 @@ mirrors the on-screen Weekly Review (templates/review.html + review_staff.html):
   1. A summary page: title, "Completed this week" (capped to the 15 most recent,
      matching the page), then "Overdue by staff member" — each staff member with
      their overdue-return total and a breakdown by return type.
-  2. One page PER staff member: three headline tiles (completed this week / open /
-     overdue returns), an "open returns by work type" bar breakdown, then their
-     Top-10 most overdue statements and 10 most recent statements side by side.
+  2. One page PER staff member: three headline tiles (completed this week / open
+     projects / overdue returns), an "open projects by work type" bar breakdown,
+     then their Top-10 most overdue statements and 10 most recent side by side.
 
 We draw by hand with a flowing top-down y-cursor (see _Doc); the two staff-page
 lists are drawn side by side by resetting the cursor between the columns. Output
@@ -48,6 +48,20 @@ START_Y = 0.06
 MAX_Y = 0.94
 LINE = 0.028        # one body row (fraction of the SHORTER landscape page)
 GAP = 0.015
+
+# Work-type breakdown. ONE font size and row height for EVERY staff member,
+# whatever their type count — a 13-type page must read exactly like a 3-type one.
+# The header block above the breakdown is deliberately tight to buy the height
+# this costs; see _staff_page.
+TYPE_FS = 9.5
+TYPE_ROW_H = 0.021
+# The most vertical space this section can take before the two statement tables
+# below would run off the bottom of the page. Nothing on the staff path calls
+# ensure(), so an overrun is silently CLIPPED rather than paginated — hence a hard
+# ceiling. 13 rows at the full height is exactly this; the most any staff member
+# has today is 13, so the ceiling only bites (shrinking rows, then the font) if a
+# future import pushes someone past that.
+TYPE_MAX_H = 13 * TYPE_ROW_H
 
 
 def _truncate(s: str, n: int) -> str:
@@ -311,21 +325,30 @@ def _tiles(doc: _Doc, tiles: list):
                     color=color, ha="left", va="center")
         doc.ax.text(x + 0.018, top - 0.094, label, fontsize=9, fontweight="bold",
                     color=MUTED, ha="left", va="center")
-    doc.advance(h + 0.025)
+    # Tight trailing gap: the height saved here goes to the work-type breakdown
+    # below, which now uses one fixed font size for every staff member.
+    doc.advance(h + 0.017)
 
 
-def _type_bars(doc: _Doc, types: list, budget: float = 0.21):
-    """Horizontal 'open returns by work type' breakdown. Shows EVERY type — no
-    "+N more" — by fitting them all into `budget` of page height: the row height
-    (and, when it gets small, the font) shrink as the type count grows, so the two
-    statement tables below still fit on the one landscape page."""
+def _type_bars(doc: _Doc, types: list, budget: float = TYPE_MAX_H):
+    """Horizontal 'open projects by work type' breakdown. Shows EVERY type — no
+    "+N more".
+
+    Every staff member gets the SAME label/value font size, whatever their type
+    count: the row height is fixed at TYPE_ROW_H rather than divided out of a
+    height budget, so a 13-type page reads exactly like a 3-type one. `budget` is
+    now only a safety ceiling — past ~14 types the rows, and then the font, shrink
+    so the two statement tables below still fit on the one landscape page."""
     if not types:
-        doc.text(LEFT, "No open returns.", size=10, color=MUTED)
+        doc.text(LEFT, "No open projects.", size=10, color=MUTED)
         doc.advance(LINE)
         return
     n = len(types)
-    row_h = min(0.032, budget / n)      # all n rows fit within `budget`
-    fs = 9.5 if row_h >= 0.028 else (8.5 if row_h >= 0.022 else 7.5)
+    row_h = min(TYPE_ROW_H, budget / n)
+    # Uniform in every real case; only a page with more types than the ceiling
+    # allows for ever drops below TYPE_FS.
+    fs = (TYPE_FS if row_h >= TYPE_ROW_H - 1e-9
+          else max(7.0, TYPE_FS * row_h / TYPE_ROW_H))
     bar_h = min(row_h * 0.55, 0.016)
     top_count = types[0]["count"] or 1
     bar_x0, bar_x1 = LEFT + 0.20, RIGHT - 0.04
@@ -464,28 +487,28 @@ def _staff_page(doc: _Doc, sp: dict):
     doc.new_page()
     # Header
     doc.text(LEFT, sp["staff"], size=22, weight="bold", color=NAVY)
-    doc.advance(0.055)
+    doc.advance(0.048)
     doc.rule(color=NAVY, width=2.0)
     doc.advance(0.006)
     doc.rule(color=GREEN, width=1.2)
-    doc.advance(0.03)
+    doc.advance(0.024)
     doc.text(LEFT, f"Weekly Review · Owen-owned clients · this week since "
              f"{sp.get('week_start', '')}", size=9.5, color=MUTED)
-    doc.advance(0.04)
+    doc.advance(0.030)
 
     # Headline tiles
     _tiles(doc, [
         (sp["completed_week"], "COMPLETED THIS WEEK", GREEN_INK, False),
-        (sp["open"], "OPEN RETURNS", NAVY, False),
+        (sp["open"], "OPEN PROJECTS", NAVY, False),
         (sp["overdue"], "OVERDUE RETURNS", (DANGER if sp["overdue"] else INK), bool(sp["overdue"])),
     ])
 
-    # Open returns by work type
-    doc.text(LEFT, "Open returns by work type", size=12, weight="bold", color=INK)
+    # Open projects by work type
+    doc.text(LEFT, "Open projects by work type", size=12, weight="bold", color=INK)
     doc.text(RIGHT, f"{sp['open']} open", size=9.5, color=MUTED, ha="right")
-    doc.advance(LINE * 1.1)
+    doc.advance(LINE * 0.85)
     _type_bars(doc, sp.get("open_by_type", []))
-    doc.advance(0.02)
+    doc.advance(0.014)
 
     # Two statement lists, side by side
     start_y = doc.y
