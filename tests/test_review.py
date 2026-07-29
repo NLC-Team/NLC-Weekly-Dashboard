@@ -6,27 +6,43 @@ TODAY = date(2026, 6, 29)
 
 
 def _item(key, client, title, days, assignee="Sarah", rtype_raw="1040 Individual",
-          owner="Owen Bradfield", status="Requested"):
-    start = TODAY - __import__("datetime").timedelta(days=days)
+          owner="Owen Bradfield", status="Requested", completed_date=None):
+    start = TODAY - timedelta(days=days)
     return {
         "item_key": key, "client": client, "title": title, "status": status,
         "first_seen": start, "source_date": start, "return_type_raw": rtype_raw,
         "assignee": assignee, "project_key": "c:" + client.lower(),
-        "client_owner": owner,
+        "client_owner": owner, "completed_date": completed_date,
     }
 
 
 def _data(items, doc_states=None, project_states=None, overdue_days=14):
-    """Mirror service.dashboard_data: enrich, fold received/completed out of
-    overdue, set each item's effective return_type, and expose data['overdue']."""
+    """Mirror service.dashboard_data: enrich, classify each document as
+    completed/closed_other, fold closed work out of overdue, set each item's
+    effective return_type, and expose data['items'] + data['overdue'].
+
+    data['items'] is the FULL row list (closed ones included) — the Weekly
+    Review's document-level "Completed this week" section reads it.
+    """
     doc_states = doc_states or {}
     project_states = project_states or {}
     enriched = analytics.enrich_items(items, TODAY, overdue_days)
     completed = {k for k, v in project_states.items() if v.get("completed")}
+    manual = {k for k, v in project_states.items()
+              if v.get("completed") and v.get("completed_source") == "manual"}
     for it in enriched:
         it["received"] = bool(doc_states.get(it["item_key"]))
-        it["completed"] = it.get("project_key") in completed
-        if it["received"] or it["completed"]:
+        pkey = it.get("project_key")
+        own_closed_other = analytics.status_is_closed_other(it.get("status"))
+        it["completed"] = (
+            analytics.status_is_done(it.get("status"))
+            or it["received"]
+            or pkey in manual
+            or (pkey in completed and not own_closed_other)
+        )
+        it["closed_other"] = own_closed_other and not it["completed"]
+        it["closed"] = it["completed"] or it["closed_other"]
+        if it["closed"]:
             it["overdue"] = False
             it["days_overdue"] = 0
     projects = analytics.build_projects(enriched, doc_states, project_states)
@@ -34,7 +50,8 @@ def _data(items, doc_states=None, project_states=None, overdue_days=14):
     for it in enriched:
         pkey = it.get("project_key") or ("c:" + it["client"].strip().lower())
         it["return_type"] = type_by_pkey.get(pkey)
-    return {"projects": projects, "overdue": analytics.overdue_items(enriched)}
+    return {"items": enriched, "projects": projects,
+            "overdue": analytics.overdue_items(enriched)}
 
 
 def _build(items, **kw):
@@ -99,93 +116,99 @@ def test_per_staff_type_counts():
     assert staff["James"]["count"] == 1
 
 
+IMPORT_DAY = date(2026, 6, 29)          # a Monday
+WINDOW_FIRST_DAY = IMPORT_DAY - timedelta(days=6)   # trailing 7 days, inclusive
+
+
+def _done(key, client, title, completed_on, **kw):
+    """A document Karbon reports as completed on `completed_on`."""
+    kw.setdefault("status", "Completed")
+    return _item(key, client, title, 40, completed_date=completed_on, **kw)
+
+
 def test_completed_this_week_window_and_scope():
+    # The window is the trailing 7 days ENDING on the import date (inclusive at
+    # both ends), and stays inside the review's Owen-owned scope.
     gen = datetime(2026, 6, 29, 7, 0)
-    ws = review._week_start_sunday(gen.date())
-    this_week = ws.isoformat()
-    last_week = (ws - timedelta(days=3)).isoformat()
     items = [
-        _item("a", "Acme", "W-2", 40, owner="Owen Bradfield"),
-        _item("b", "Beta", "1099", 40, owner="Owen Bradfield"),
-        _item("c", "Ceta", "K-1", 40, owner="Marcus Lorne"),
+        _done("a", "Acme", "W-2", IMPORT_DAY),
+        _done("b", "Beta", "1099", WINDOW_FIRST_DAY),
+        _done("c", "Ceta", "K-1", WINDOW_FIRST_DAY - timedelta(days=1)),
+        _done("d", "Delt", "1065", IMPORT_DAY, owner="Marcus Lorne"),
+        _item("e", "Echo", "W-9", 40),   # never completed -> no completed_date
     ]
-    pstates = {
-        "c:acme": {"return_type": "Tax: 1040", "completed": True, "completed_at": this_week},
-        "c:beta": {"return_type": "Tax: 1120", "completed": True, "completed_at": last_week},
-        "c:ceta": {"return_type": "Tax: 1065", "completed": True, "completed_at": this_week},
-    }
-    r = review.build_review(_data(items, project_states=pstates), "NLC", gen)
+    r = review.build_review(_data(items), "NLC", gen, last_import_date=IMPORT_DAY)
     clients = [c["client"] for c in r["completed_this_week"]]
-    assert "Acme" in clients          # completed this week, Owen-owned
-    assert "Beta" not in clients      # completed before this Sunday
-    assert "Ceta" not in clients      # this week but not Owen-owned
-    assert r["week_start"] == ws.isoformat()
+    assert "Acme" in clients      # completed on the import day itself
+    assert "Beta" in clients      # oldest day still inside the 7-day window
+    assert "Ceta" not in clients  # one day past the window
+    assert "Delt" not in clients  # inside the window but not Owen-owned
+    assert "Echo" not in clients  # no completion date at all
+    assert r["week_start"] == WINDOW_FIRST_DAY.isoformat()
 
 
-def test_completed_this_week_includes_work_title():
-    # A client can bundle several documents under one client-level return (see
-    # analytics.build_projects); the "Completed this week" title joins their
-    # titles the same way assignee_label joins staff names.
+def test_completed_this_week_counts_each_document_not_the_client():
+    # The point of counting documents: two returns finished for ONE client are
+    # TWO completions. The old project-level tally collapsed them into one,
+    # because analytics.build_projects groups client-level when the export has
+    # no project column.
     gen = datetime(2026, 6, 29, 7, 0)
-    ws = review._week_start_sunday(gen.date())
-    this_week = ws.isoformat()
     items = [
-        _item("a1", "Acme", "1040 Return", 40, owner="Owen Bradfield"),
-        _item("a2", "Acme", "State Return", 40, owner="Owen Bradfield"),
-        _item("b1", "Beta", "1099", 40, owner="Owen Bradfield"),
+        _done("a1", "Acme", "1040 Return", IMPORT_DAY),
+        _done("a2", "Acme", "State Return", IMPORT_DAY),
+        _done("b1", "Beta", "1099", IMPORT_DAY),
     ]
-    pstates = {
-        "c:acme": {"return_type": "Tax: 1040", "completed": True, "completed_at": this_week},
-        "c:beta": {"return_type": "Tax: 1099", "completed": True, "completed_at": this_week},
-    }
-    r = review.build_review(_data(items, project_states=pstates), "NLC", gen)
-    by_client = {c["client"]: c for c in r["completed_this_week"]}
-    assert by_client["Acme"]["title"] == "1040 Return, State Return"
-    assert by_client["Beta"]["title"] == "1099"
+    r = review.build_review(_data(items), "NLC", gen, last_import_date=IMPORT_DAY)
+    done = r["completed_this_week"]
+    assert len(done) == 3
+    assert [c["client"] for c in done].count("Acme") == 2
+    assert {c["title"] for c in done} == {"1040 Return", "State Return", "1099"}
 
 
-def test_completed_this_week_resets_from_last_import_not_calendar_week():
-    # A completion recorded just before a calendar week flips must not be silently
-    # dropped just because nobody viewed the review until the following week -- the
-    # window resets from the actual last import date, not a fixed calendar Sunday.
+def test_completed_window_anchors_to_import_date_not_calendar_week():
+    # Work finished just before a calendar week flips must not silently fall out
+    # of every report: the window follows the import date, whatever weekday that
+    # is, rather than resetting on a fixed Sunday.
+    gen = datetime(2026, 6, 29, 7, 0)      # viewed on a Monday
+    last_import = date(2026, 6, 25)        # imported the previous Thursday
+    items = [_done("a", "Gamma", "W-2", last_import)]
+    data = _data(items)
+
+    r = review.build_review(data, "NLC", gen, last_import_date=last_import)
+    assert "Gamma" in [c["client"] for c in r["completed_this_week"]]
+    assert r["week_start"] == (last_import - timedelta(days=6)).isoformat()
+
+
+def test_staff_completed_week_totals_match_the_headline_list():
+    # Every completion is credited to its own document's assignee, so summing the
+    # per-staff tiles reproduces the headline count exactly.
     gen = datetime(2026, 6, 29, 7, 0)
-    ws = review._week_start_sunday(gen.date())
-    last_import = ws - timedelta(days=3)   # e.g. a Thursday import, in the
-                                            # PREVIOUS calendar week relative to `gen`
-    items = [_item("a", "Gamma", "W-2", 40, owner="Owen Bradfield")]
-    pstates = {
-        "c:gamma": {"return_type": "Tax: 1040", "completed": True,
-                    "completed_at": last_import.isoformat()},
-    }
-    data = _data(items, project_states=pstates)
-
-    # Old calendar-week rule (no last_import_date given) would exclude it.
-    r_calendar = review.build_review(data, "NLC", gen)
-    assert "Gamma" not in [c["client"] for c in r_calendar["completed_this_week"]]
-
-    # Anchored to the actual last import date, it's correctly included.
-    r_import = review.build_review(data, "NLC", gen, last_import_date=last_import)
-    assert "Gamma" in [c["client"] for c in r_import["completed_this_week"]]
-    assert r_import["week_start"] == last_import.isoformat()
+    items = [
+        _done("a1", "Acme", "1040 Return", IMPORT_DAY, assignee="Sarah"),
+        _done("a2", "Acme", "State Return", IMPORT_DAY, assignee="James"),
+        _done("b1", "Beta", "1099", IMPORT_DAY, assignee="Sarah"),
+    ]
+    r = review.build_review(_data(items), "NLC", gen, last_import_date=IMPORT_DAY)
+    by_staff = {s["assignee"]: s for s in r["staff_rows"]}
+    assert by_staff["Sarah"]["completed_week"] == 2
+    assert by_staff["James"]["completed_week"] == 1
+    assert (sum(s["completed_week"] for s in r["staff_rows"])
+            == len(r["completed_this_week"]) == 3)
 
 
 def test_completed_this_week_excludes_closed_other():
-    # A client closed out ONLY via a "Completed - <word>" status (see
-    # analytics.status_is_closed_other) is not a real completion -- even though
-    # apply_import_completion stamps project_state.completed_at for it too (the
-    # Settings "Completed statuses" list includes those variants), it must never
-    # show up in "Completed this week".
+    # A document closed out ONLY via a "Completed - <word>" status (see
+    # analytics.status_is_closed_other) is not a real completion -- Karbon still
+    # stamps a Completed Date on it, so it must be filtered out explicitly.
     gen = datetime(2026, 6, 29, 7, 0)
-    ws = review._week_start_sunday(gen.date())
-    items = [_item("a", "ClosedOther", "Extension", 40, owner="Owen Bradfield",
-                    status="Completed - Cancelled")]
-    pstates = {
-        "c:closedother": {"return_type": "Tax: 1040", "completed": True,
-                          "completed_source": "import", "completed_at": ws.isoformat()},
-    }
-    data = _data(items, project_states=pstates)
-    r = review.build_review(data, "NLC", gen, last_import_date=ws)
-    assert "ClosedOther" not in [c["client"] for c in r["completed_this_week"]]
+    items = [
+        _done("a", "ClosedOther", "Extension", IMPORT_DAY, status="Completed - Cancelled"),
+        _done("b", "RealDone", "1040 Return", IMPORT_DAY),
+    ]
+    r = review.build_review(_data(items), "NLC", gen, last_import_date=IMPORT_DAY)
+    clients = [c["client"] for c in r["completed_this_week"]]
+    assert "ClosedOther" not in clients
+    assert clients == ["RealDone"]
 
 
 def test_staff_page_recent_overdue_projects_sorted_freshest_first():

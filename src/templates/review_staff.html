@@ -38,19 +38,19 @@
 
 <!-- Open projects, broken out by work type (mini bar breakdown) -->
 <div class="card mb-2">
-  <div class="card-title">Open projects by work type
+  <div class="card-title" style="margin-bottom:1px">Open projects by work type
     <span class="text-muted" style="font-weight:400;font-size:13px">({{ staff.open }} open)</span>
   </div>
   {% if staff.open_by_type %}
   {% set top_count = staff.open_by_type[0].count %}
-  <div style="display:flex;flex-direction:column;gap:8px">
+  <div style="display:flex;flex-direction:column;gap:10px">
     {% for t in staff.open_by_type %}
-    <div style="display:grid;grid-template-columns:200px 1fr 40px;align-items:center;gap:12px">
-      <div style="font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.type }}</div>
-      <div style="background:#eef1f7;border-radius:6px;height:16px;overflow:hidden">
+    <div style="display:flex;align-items:center">
+      <div style="font-size:25px;line-height:1;font-weight:600;white-space:nowrap;flex-shrink:0">{{ t.type }}</div>
+      <div style="flex:1;background:#eef1f7;border-radius:6px;height:30px;overflow:hidden">
         <div style="height:100%;background:var(--navy);border-radius:6px;width:{{ (100 * t.count / top_count)|round(1) }}%"></div>
       </div>
-      <div style="font-family:var(--serif);font-weight:700;font-size:18px;text-align:right;font-variant-numeric:tabular-nums lining-nums">{{ t.count }}</div>
+      <div style="font-family:var(--serif);line-height:1;font-weight:700;font-size:27px;text-align:right;font-variant-numeric:tabular-nums lining-nums;flex-shrink:0;margin-left:12px;min-width:48px">{{ t.count }}</div>
     </div>
     {% endfor %}
   </div>

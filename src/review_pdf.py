@@ -53,8 +53,8 @@ GAP = 0.015
 # whatever their type count — a 13-type page must read exactly like a 3-type one.
 # The header block above the breakdown is deliberately tight to buy the height
 # this costs; see _staff_page.
-TYPE_FS = 9.5
-TYPE_ROW_H = 0.021
+TYPE_FS = 13.0
+TYPE_ROW_H = 0.028
 # The most vertical space this section can take before the two statement tables
 # below would run off the bottom of the page. Nothing on the staff path calls
 # ensure(), so an overrun is silently CLIPPED rather than paginated — hence a hard
@@ -170,38 +170,72 @@ def _short_date(iso: str) -> str:
 _PER_CHAR = 0.0062
 
 
-def _type_chip_row(doc: _Doc, types: list, indent: float, x_right: float = RIGHT):
-    """Lay out "<type> <count>" as bounded CHIP pills, left-to-right, wrapping at
-    x_right — the PDF equivalent of the on-screen `.type-chip` (a light tag
-    background, muted type name, bold navy count), so a type + its count read as
-    one discrete unit instead of a run of plain text."""
-    chip_h = 0.026
-    pad_x = 0.009
-    inner_gap = 0.006     # between the type name and its count, inside the chip
-    gap = 0.012           # between chips
+# Chip geometry, shared by the measure pass and the draw pass below.
+_CHIP_H = 0.026        # one chip's height
+_CHIP_GAP_Y = 0.010    # vertical gap between wrapped chip rows
+_CHIP_PAD_X = 0.009    # horizontal padding inside a chip
+_CHIP_INNER_GAP = 0.006  # between the type name and its count, inside the chip
+_CHIP_GAP_X = 0.012    # between chips on the same row
+
+
+def _chip_layout(types: list, indent: float, x_right: float) -> tuple[list, float]:
+    """Plan a chip block WITHOUT drawing anything: returns (placements, height).
+
+    Each placement is (row, x, item_w, label, label_w, count). Pure geometry, so
+    a caller can reserve the block's exact height BEFORE any ink hits the page.
+    That reservation is what keeps a staff card whole: the draw pass must never
+    paginate on its own, because a card's frame and centered name are computed
+    from a before/after cursor pair that is only meaningful within one page.
+    """
+    placements = []
     x = indent
-    doc.ensure(chip_h + 0.006)
+    row = 0
     for t in types:
         label = str(t["type"])
         count = str(t["count"])
         label_w = len(label) * _PER_CHAR
-        count_w = len(count) * _PER_CHAR
-        item_w = pad_x * 2 + label_w + inner_gap + count_w
+        item_w = _CHIP_PAD_X * 2 + label_w + _CHIP_INNER_GAP + len(count) * _PER_CHAR
         if x > indent and x + item_w > x_right:       # wrap to a new chip row
-            doc.advance(chip_h + 0.010)
-            doc.ensure(chip_h + 0.006)
+            row += 1
             x = indent
-        top = doc._yc()
-        mid = top - chip_h / 2
-        doc.ax.add_patch(Rectangle((x, top - chip_h), item_w, chip_h,
+        placements.append((row, x, item_w, label, label_w, count))
+        x += item_w + _CHIP_GAP_X
+    n_rows = (placements[-1][0] + 1) if placements else 0
+    return placements, _chip_block_height(n_rows)
+
+
+def _chip_block_height(n_rows: int) -> float:
+    """Ink height of `n_rows` chip rows — no trailing gap, so a card drawn around
+    the block hugs it and a name centered against it lines up with the chips."""
+    return n_rows * _CHIP_H + max(0, n_rows - 1) * _CHIP_GAP_Y
+
+
+def _type_chip_row(doc: _Doc, types: list, indent: float, x_right: float = RIGHT):
+    """Draw "<type> <count>" as bounded CHIP pills, left-to-right, wrapping at
+    x_right — the PDF equivalent of the on-screen `.type-chip` (a light tag
+    background, muted type name, bold navy count), so a type + its count read as
+    one discrete unit instead of a run of plain text.
+
+    Draws entirely within the space the caller reserved and advances the cursor by
+    exactly the height `_chip_layout` reported. Deliberately never calls
+    doc.ensure(): pagination here would split a staff card in half.
+    """
+    placements, height = _chip_layout(types, indent, x_right)
+    block_top = doc.y
+    for row, x, item_w, label, label_w, count in placements:
+        top = block_top + row * (_CHIP_H + _CHIP_GAP_Y)
+        yc_top = 1.0 - top
+        mid = yc_top - _CHIP_H / 2
+        doc.ax.add_patch(Rectangle((x, yc_top - _CHIP_H), item_w, _CHIP_H,
                                    facecolor="#f3f0e9", edgecolor=RULE,
                                    linewidth=0.8, zorder=1))
-        doc.ax.text(x + pad_x, mid, label, fontsize=8.5, color=MUTED,
+        doc.ax.text(x + _CHIP_PAD_X, mid, label, fontsize=8.5, color=MUTED,
                     ha="left", va="center", zorder=2)
-        doc.ax.text(x + pad_x + label_w + inner_gap, mid, count, fontsize=9.5,
-                    fontweight="bold", color=NAVY, ha="left", va="center", zorder=2)
-        x += item_w + gap
-    doc.advance(chip_h + 0.010)
+        doc.ax.text(x + _CHIP_PAD_X + label_w + _CHIP_INNER_GAP, mid, count,
+                    fontsize=9.5, fontweight="bold", color=NAVY,
+                    ha="left", va="center", zorder=2)
+    doc.advance(height)
+    return height
 
 
 # ---- Statement tables (used on each staff page, drawn in a half-width column) ---
@@ -349,17 +383,25 @@ def _type_bars(doc: _Doc, types: list, budget: float = TYPE_MAX_H):
     # allows for ever drops below TYPE_FS.
     fs = (TYPE_FS if row_h >= TYPE_ROW_H - 1e-9
           else max(7.0, TYPE_FS * row_h / TYPE_ROW_H))
-    bar_h = min(row_h * 0.55, 0.016)
+    bar_h = min(row_h * 0.6, 0.020)
     top_count = types[0]["count"] or 1
-    bar_x0, bar_x1 = LEFT + 0.20, RIGHT - 0.04
+    bar_x1 = RIGHT - 0.04
+    bar_gap = 0.006   # sliver of clearance so the track doesn't sit ON the last letter
     for t in types:
         mid = doc._yc() - row_h * 0.5
-        doc.ax.text(LEFT, mid, _truncate(t["type"], 32), fontsize=fs,
-                    color=INK, ha="left", va="center")
-        doc.ax.add_patch(Rectangle((bar_x0, mid - bar_h / 2), (bar_x1 - bar_x0),
+        label = _truncate(t["type"], 32)
+        doc.ax.text(LEFT, mid, label, fontsize=fs, color=INK, ha="left", va="center")
+        # Each row's bar starts right after ITS OWN label, not a shared column —
+        # approximate the rendered label width from character count (same trick
+        # _PER_CHAR uses for the statement tables) so short labels don't leave a
+        # dead gap before the bar begins.
+        label_w = len(label) * _PER_CHAR * (fs / 10.5)
+        bar_x0 = LEFT + label_w + bar_gap
+        bar_w = max(bar_x1 - bar_x0, 0.01)
+        doc.ax.add_patch(Rectangle((bar_x0, mid - bar_h / 2), bar_w,
                                    bar_h, facecolor=BAND, edgecolor="none"))
         doc.ax.add_patch(Rectangle((bar_x0, mid - bar_h / 2),
-                                   (bar_x1 - bar_x0) * (t["count"] / top_count),
+                                   bar_w * (t["count"] / top_count),
                                    bar_h, facecolor=NAVY, edgecolor="none"))
         doc.ax.text(RIGHT, mid, str(t["count"]), fontsize=fs, fontweight="bold",
                     color=INK, ha="right", va="center")
@@ -444,26 +486,44 @@ def _summary_page(doc: _Doc, rv: dict):
     OVERDUE_X, RETURNS_X = 0.325, 0.375
     CARD_GAP = 0.016
     PAD_X, PAD_Y = 0.008, 0.006
-    doc.ensure(0.1)
-    doc.text(LEFT, "Overdue by staff member", size=13, weight="bold", color=INK)
-    doc.advance(0.035)
-    doc.text(LEFT, "STAFF MEMBER", size=8.5, weight="bold", color=MUTED)
-    doc.text(OVERDUE_X, "OVERDUE", size=8.5, weight="bold", color=MUTED, ha="right")
-    doc.text(RETURNS_X, "RETURNS", size=8.5, weight="bold", color=MUTED)
-    doc.advance(LINE * 0.85)
-    doc.rule(color=NAVY, width=1.2)
-    doc.advance(GAP)
+
+    def section_header():
+        """Title + column headings + the navy rule. Redrawn at the top of every
+        page the cards continue onto, so no page opens with unlabelled columns."""
+        doc.text(LEFT, "Overdue by staff member", size=13, weight="bold", color=INK)
+        doc.advance(0.035)
+        doc.text(LEFT, "STAFF MEMBER", size=8.5, weight="bold", color=MUTED)
+        doc.text(OVERDUE_X, "OVERDUE", size=8.5, weight="bold", color=MUTED, ha="right")
+        doc.text(RETURNS_X, "RETURNS", size=8.5, weight="bold", color=MUTED)
+        doc.advance(LINE * 0.85)
+        doc.rule(color=NAVY, width=1.2)
+        doc.advance(GAP)
+
+    # The section gets its own page: it used to be squeezed into whatever space was
+    # left under "Completed this week", which both crammed it and guaranteed the
+    # first card would be the one to overflow.
+    doc.new_page()
+    section_header()
     rows = rv.get("staff_rows", [])
     if not rows:
         doc.text(LEFT, "No staff member has Owen-owned work right now.", size=10.5, color=MUTED)
         return
     for s in rows:
-        doc.ensure(LINE * 1.6)
+        types = s.get("overdue_by_type") or []
+        # MEASURE the card before drawing any of it. A card is atomic: its frame
+        # and its vertically-centered name/count are derived from the cursor
+        # before and after its content, and those two values are only comparable
+        # on the same page. Splitting one produced a negative-height frame (drawn
+        # inverted, as a full-page box whose stray edge struck through unrelated
+        # rows) and a name centered on nothing.
+        content_h = _chip_layout(types, RETURNS_X, RIGHT)[1] if types else LINE
+        card_h = content_h + 2 * PAD_Y
+        if doc.y + card_h > MAX_Y:
+            doc.new_page()
+            section_header()
         row_top = doc.y
-        # Draw the Returns cell first (it decides the card's height); Name and
-        # Overdue are placed afterward once that height is known, centered in it.
-        if s.get("overdue_by_type"):
-            _type_chip_row(doc, s["overdue_by_type"], indent=RETURNS_X, x_right=RIGHT)
+        if types:
+            _type_chip_row(doc, types, indent=RETURNS_X, x_right=RIGHT)
         else:
             doc.text(RETURNS_X, "No overdue returns", size=9.5, color=MUTED,
                      y=row_top + LINE * 0.5, va="center")

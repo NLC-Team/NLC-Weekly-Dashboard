@@ -27,6 +27,11 @@ _GUESS_HINTS = {
     "status": ["status", "state", "stage", "workflow"],
     "date": ["start date", "created", "opened", "requested", "date"],
     "due_date": ["due date", "due", "deadline", "target date"],
+    # Karbon exports this as "Completed Date UTC". Resolved before the loose
+    # "date" hint below (see the sort in guess_mapping), so it claims its own
+    # column instead of losing it to the start-date field.
+    "completed_date": ["completed date utc", "completed date", "date completed",
+                       "completion date", "completed"],
     "item_id": ["work id", "document id", "id", "number", "ref", "reference"],
     "project": ["project", "engagement", "matter", "return id", "return name"],
     "return_type": ["return type", "work type", "engagement type", "form type", "type"],
@@ -147,6 +152,10 @@ def apply_mapping(df: pd.DataFrame, mapping: dict) -> list[dict]:
 
     source_dates = parse_date_col("date")
     due_dates = parse_date_col("due_date")
+    # "Completed Date UTC" carries a full timestamp ("2026-07-29 01:22:43");
+    # parse_date_col truncates to the calendar date, which is all the
+    # week-window comparisons need.
+    completed_dates = parse_date_col("completed_date")
 
     records = []
     seen: dict[str, int] = {}
@@ -159,6 +168,7 @@ def apply_mapping(df: pd.DataFrame, mapping: dict) -> list[dict]:
             "status": status[i],
             "source_date": source_dates[i],
             "due_date": due_dates[i],
+            "completed_date": completed_dates[i],
             "return_type_raw": return_type[i],
         }
         rec["project_key"] = ("p:" + project[i].strip().lower() if project[i]

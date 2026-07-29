@@ -56,6 +56,58 @@ def _week_start_sunday(d: date) -> date:
     return d - timedelta(days=(d.weekday() + 1) % 7)
 
 
+# How many days the "Completed this week" window spans, counting the import day
+# itself — i.e. the import date and the six days before it.
+COMPLETED_WINDOW_DAYS = 7
+
+
+def _completed_window(anchor: date) -> tuple[date, date]:
+    """The trailing 7-day completion window ending on `anchor` (the import date).
+
+    Deliberately NOT pinned to a calendar weekday: the review answers "what
+    finished in the week leading up to this import", so importing on a Wednesday
+    covers the previous Thursday through that Wednesday. Anchoring to the import
+    date (rather than a fixed Sunday/Monday) means nothing completed just before
+    a calendar boundary silently falls out of every week's report.
+    """
+    return anchor - timedelta(days=COMPLETED_WINDOW_DAYS - 1), anchor
+
+
+def _completed_date(it: dict) -> date | None:
+    """A document's own completion date from Karbon's "Completed Date UTC"
+    column, or None when the export didn't provide one."""
+    cd = it.get("completed_date")
+    if cd is None or cd == "":
+        return None
+    if isinstance(cd, date):
+        return cd
+    try:
+        return date.fromisoformat(str(cd)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def _completed_in_window(it: dict, start: date, end: date) -> bool:
+    """True when this DOCUMENT genuinely completed inside the window.
+
+    Counts individual documents (one return each), never whole clients — the
+    project-level tally this replaced grouped by client (analytics.build_projects
+    falls back to a 'c:'+client key when the export has no project column), which
+    inflated one finished client into one "completion" no matter how many returns
+    it held, and vice versa.
+
+    "Completed - Cancelled" / "- Not a fit" / "- Billed" are closed out but are
+    not real completions (see service.dashboard_data), so they're excluded here
+    too — matching what the Completed tab counts.
+    """
+    cd = _completed_date(it)
+    if cd is None or not (start <= cd <= end):
+        return False
+    if it.get("closed_other"):
+        return False
+    return _in_scope(it)
+
+
 def _owner_in_scope(owner) -> bool:
     return (owner or "").strip().lower().startswith(OWNER_PREFIX)
 
@@ -74,6 +126,19 @@ def _item_type(it: dict) -> str:
     to the project's effective type; fall back to the raw CSV value for callers
     (tests) that hand us bare enriched items."""
     return it.get("return_type") or normalize_return_type(it.get("return_type_raw"))
+
+
+def _doc_type(it: dict) -> str:
+    """This DOCUMENT's own work type, straight from the export's Work Type column.
+
+    Deliberately not `_item_type`: service.dashboard_data overwrites every item's
+    `return_type` with its PROJECT's effective type, and projects group
+    client-level when the export has no project column — so a client's
+    "2025 Year-End Review" would render under whatever type won for that client
+    overall (e.g. "Payroll"). A per-document list has to show the document's own
+    type or the column is actively misleading.
+    """
+    return normalize_return_type(it.get("return_type_raw")) or _item_type(it)
 
 
 def _opened_iso(it: dict) -> str:
@@ -122,14 +187,16 @@ def _types_list(counter) -> list:
             for t, c in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0].lower()))]
 
 
-def _staff_project_stats(data: dict, week_start: date) -> dict:
-    """Per-staff PROJECT-level tallies over the Owen-owned projects, attributing
-    each project to every staff member who works it (a project's `assignees`).
+def _staff_project_stats(data: dict, week_start: date, week_end: date) -> dict:
+    """Per-staff tallies over the Owen-owned work, attributing each project to
+    every staff member who works it (a project's `assignees`).
 
     Returns name -> {overdue, open, completed_week, overdue_by_type: Counter,
-    open_by_type: Counter}. Project-level (not statement-level) because the staff
-    page and the main-page summary count returns, not individual documents:
-    'open projects by work type', 'overdue projects', 'completed this week'.
+    open_by_type: Counter}. `overdue`/`open` are PROJECT-level because the staff
+    page and main-page summary count returns, not individual documents.
+    `completed_week`, though, is DOCUMENT-level over the trailing 7-day window,
+    so it matches the headline "Completed this week" list exactly — the two used
+    to be computed differently and could disagree.
     """
     stats: dict[str, dict] = {}
 
@@ -149,12 +216,6 @@ def _staff_project_stats(data: dict, week_start: date) -> dict:
             continue
         is_overdue = bool(p.get("overdue"))
         is_open = bool(p.get("open"))
-        done_this_week = False
-        if p.get("completed") and p.get("completed_at"):
-            try:
-                done_this_week = date.fromisoformat(str(p["completed_at"])[:10]) >= week_start
-            except (ValueError, TypeError):
-                done_this_week = False
         for name in names:
             b = bucket(name)
             if is_overdue:
@@ -163,8 +224,14 @@ def _staff_project_stats(data: dict, week_start: date) -> dict:
             if is_open:
                 b["open"] += 1
                 b["open_by_type"][rtype] += 1
-            if done_this_week:
-                b["completed_week"] += 1
+
+    # Completions are counted per DOCUMENT and credited to that document's own
+    # assignee — not spread across everyone who touched the return — so summing
+    # every staff member's completed_week reproduces the headline total.
+    for it in data.get("items", []):
+        if not _completed_in_window(it, week_start, week_end):
+            continue
+        bucket(_norm_assignee(it.get("assignee")))["completed_week"] += 1
     return stats
 
 
@@ -187,38 +254,29 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
     Ordering matches the dashboard: overdue statements by days_overdue, worst first.
     Scope: only Owen-owned clients, excluding NO CORRESPONDENCE statuses (see _in_scope).
     """
-    # "Completed this week" resets from the most recent IMPORT date, not a fixed
-    # calendar Sunday -- the review is meant to show what finished since the data
-    # was last refreshed, however many days that was, so nothing completed just
-    # before a calendar week flips silently falls out of every week's report.
+    # "Completed this week" is the trailing 7 days ending on the most recent
+    # IMPORT date -- see _completed_window. Counted per DOCUMENT from Karbon's
+    # "Completed Date UTC", so the figure is the number of individual returns
+    # that finished, not the number of clients that happened to close out.
     # `last_import_date` is the caller's source of truth (webapp.py passes
-    # store.last_import()); fall back to the old Sunday-of-`generated_at` rule only
-    # when no import history is available (e.g. a brand-new database).
+    # store.last_import()); fall back to `generated_at` when there's no import
+    # history yet (e.g. a brand-new database).
     gen_date = generated_at.date() if hasattr(generated_at, "date") else generated_at
-    week_start = last_import_date or _week_start_sunday(gen_date)
+    week_start, week_end = _completed_window(last_import_date or gen_date)
     completed_week = []
-    for p in data.get("projects", []):
-        if not (p.get("completed") and p.get("completed_at")):
+    for it in data.get("items", []):
+        if not _completed_in_window(it, week_start, week_end):
             continue
-        if not _owner_in_scope(p.get("client_owner")):
-            continue
-        # Drop returns worked ONLY by an excluded system account (Karbon Support).
-        real_assignees = [a for a in (p.get("assignees") or []) if not _is_excluded_assignee(a)]
-        if p.get("assignees") and not real_assignees:
-            continue
-        try:
-            cad = date.fromisoformat(str(p["completed_at"])[:10])
-        except (ValueError, TypeError):
-            continue
-        if cad >= week_start:
-            completed_week.append({
-                "client": p.get("client", ""),
-                "title": _project_title_label(p),
-                "return_type": p.get("return_type", ""),
-                "assignee": p.get("assignee_label", ""),
-                "completed_at": cad.isoformat(),
-            })
-    completed_week.sort(key=lambda r: r["completed_at"], reverse=True)
+        completed_week.append({
+            "client": it.get("client", ""),
+            "title": it.get("title", ""),
+            "return_type": _doc_type(it),
+            "assignee": _norm_assignee(it.get("assignee")),
+            "completed_at": _completed_date(it).isoformat(),
+        })
+    # Newest first, then client/title so same-day rows have a stable order.
+    completed_week.sort(key=lambda r: (r["completed_at"], r["client"].lower(),
+                                       r["title"].lower()), reverse=True)
 
     overdue = sorted((it for it in data.get("overdue", []) if _in_scope(it)),
                      key=lambda it: (it.get("days_overdue", 0), it.get("age_days", 0)),
@@ -261,7 +319,7 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
     # Each staff row links to their own detail page (see build_staff_page). A
     # staff member appears if they have ANY Owen-owned open/overdue/just-completed
     # work this week, so every relevant person gets a row and a page.
-    pstats = _staff_project_stats(data, week_start)
+    pstats = _staff_project_stats(data, week_start, week_end)
     staff_rows = []
     for name, b in pstats.items():
         if not (b["overdue"] or b["open"] or b["completed_week"]):
@@ -295,9 +353,11 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
                      last_import_date: date | None = None) -> dict:
     """One staff member's detail page for the weekly review (Owen-owned scope).
 
-    Project-level headline tiles (completed this week / open / overdue, plus open
-    broken out by work type) come from _staff_project_stats — the SAME tallies the
-    main page's summary row uses, so a staff member's numbers match between the two.
+    Headline tiles (completed this week / open / overdue, plus open broken out by
+    work type) come from _staff_project_stats — the SAME tallies the main page's
+    summary row uses, so a staff member's numbers match between the two. Open and
+    overdue are project-level; completed-this-week is document-level (see
+    _staff_project_stats).
     `last_import_date` MUST be the same value passed to build_review for this
     review, or a staff member's "completed this week" count would disagree with the
     main page's list. Returns a dict ready for review_staff.html, with two detail
@@ -307,10 +367,10 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
     overdue threshold, as a "newly at-risk" complement to the worst-first list).
     """
     gen_date = generated_at.date() if hasattr(generated_at, "date") else generated_at
-    week_start = last_import_date or _week_start_sunday(gen_date)
+    week_start, week_end = _completed_window(last_import_date or gen_date)
     who = _norm_assignee(staff_name)
 
-    b = _staff_project_stats(data, week_start).get(who, {
+    b = _staff_project_stats(data, week_start, week_end).get(who, {
         "overdue": 0, "open": 0, "completed_week": 0,
         "overdue_by_type": Counter(), "open_by_type": Counter(),
     })

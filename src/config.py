@@ -81,6 +81,10 @@ LOGICAL_FIELDS = [
     ("status", "Status", True),
     ("date", "Start / created / opened date", False),
     ("due_date", "Due date", False),
+    # Karbon's per-document completion timestamp ("Completed Date UTC"). The one
+    # trustworthy source for WHEN an individual return finished — the Weekly
+    # Review's "Completed this week" counts these documents, not whole clients.
+    ("completed_date", "Completed date (per document)", False),
     ("item_id", "Karbon work ID (stable key)", False),
     ("project", "Return / project (groups documents)", False),
     ("return_type", "Return type (1040, 1120, ...)", False),
