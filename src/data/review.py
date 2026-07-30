@@ -24,11 +24,16 @@ from datetime import date, timedelta
 from config import normalize_return_type
 
 # ---- Weekly-review scope (business rules, kept here so they're easy to change) --
-# The review covers ONLY clients owned by Owen, and never the "NO CORRESPONDENCE"
-# statuses. Owner is matched by prefix (the data has "Owen Bradfield"); the status
-# exclusion matches the SUBSTRING so it catches "Ready To Start - NO CORRESPONDENCE"
-# without touching legitimate correspondence work titles (e.g. "IRS Correspondence
-# - Refund Issue"), which live in the title, not the status.
+# The review covers clients owned by Owen PLUS clients with no Client Owner
+# recorded at all (a blank export field, e.g. never set in Karbon) — but never a
+# different, named owner (e.g. "Marcus Lorne"). A blank owner is treated as "not
+# excluded" rather than silently dropped, so work doesn't fall out of the review
+# just because Karbon's Client Owner column was left empty. The review never
+# shows the "NO CORRESPONDENCE" statuses either. Owner is matched by prefix (the
+# data has "Owen Bradfield"); the status exclusion matches the SUBSTRING so it
+# catches "Ready To Start - NO CORRESPONDENCE" without touching legitimate
+# correspondence work titles (e.g. "IRS Correspondence - Refund Issue"), which
+# live in the title, not the status.
 OWNER_PREFIX = "Owen"
 EXCLUDE_STATUS_SUBSTR = "no correspondence"
 
@@ -42,10 +47,14 @@ def _is_excluded_assignee(name) -> bool:
     return _norm_assignee(name).lower() in EXCLUDE_ASSIGNEES
 
 
+def _owner_in_scope(owner) -> bool:
+    o = (owner or "").strip().lower()
+    return not o or o.startswith(OWNER_PREFIX)
+
+
 def _in_scope(it: dict) -> bool:
-    owner = (it.get("client_owner") or "").strip().lower()
     status = (it.get("status") or "").lower()
-    return (owner.startswith(OWNER_PREFIX)
+    return (_owner_in_scope(it.get("client_owner"))
             and EXCLUDE_STATUS_SUBSTR not in status
             and not _is_excluded_assignee(it.get("assignee")))
 
@@ -106,10 +115,6 @@ def _completed_in_window(it: dict, start: date, end: date) -> bool:
     if it.get("closed_other"):
         return False
     return _in_scope(it)
-
-
-def _owner_in_scope(owner) -> bool:
-    return (owner or "").strip().lower().startswith(OWNER_PREFIX)
 
 
 def _norm_assignee(a) -> str:
@@ -188,15 +193,29 @@ def _types_list(counter) -> list:
 
 
 def _staff_project_stats(data: dict, week_start: date, week_end: date) -> dict:
-    """Per-staff tallies over the Owen-owned work, attributing each project to
-    every staff member who works it (a project's `assignees`).
+    """Per-staff tallies over the Owen-owned work, at (client, work type) grain —
+    e.g. "Acme Corp / Payroll" and "Acme Corp / Tax: 1040" are tallied as two
+    separate engagements, each open/overdue only if ITS OWN documents need work.
+
+    Deliberately NOT `data["projects"]` (analytics.build_projects): a Karbon
+    export usually has no per-return "Project" tag, so build_projects falls back
+    to grouping EVERY document for a client into one bucket regardless of work
+    type — one lingering open Tax Return then keeps an otherwise-finished Payroll
+    engagement reading as "open" for the whole client, and the client's mixed bag
+    of types collapses into whichever type happened to come first. The Weekly
+    Review answers "is this work type done for this client", so it re-groups
+    `data["items"]` itself here, using each document's own type (`_doc_type`, the
+    export's raw Work Type column) rather than the merged project-level type.
+    NOTE: a manual project-type override set via Returns & Bookkeeping (for
+    clients whose export type is blank) is a whole-client override tied to the
+    old client-level grouping, so it does NOT carry over to this per-type view —
+    such a client's undated documents still show as "Unclassified" here.
 
     Returns name -> {overdue, open, completed_week, overdue_by_type: Counter,
-    open_by_type: Counter}. `overdue`/`open` are PROJECT-level because the staff
-    page and main-page summary count returns, not individual documents.
-    `completed_week`, though, is DOCUMENT-level over the trailing 7-day window,
-    so it matches the headline "Completed this week" list exactly — the two used
-    to be computed differently and could disagree.
+    open_by_type: Counter}. `overdue`/`open` count ENGAGEMENTS (client + work
+    type pairs), not individual documents. `completed_week` is DOCUMENT-level
+    over the trailing 7-day window, so it matches the headline "Completed this
+    week" list exactly.
     """
     stats: dict[str, dict] = {}
 
@@ -206,22 +225,28 @@ def _staff_project_stats(data: dict, week_start: date, week_end: date) -> dict:
             "overdue_by_type": Counter(), "open_by_type": Counter(),
         })
 
-    for p in data.get("projects", []):
-        if not _owner_in_scope(p.get("client_owner")):
+    engagements: dict[tuple, dict] = {}
+    for it in data.get("items", []):
+        if not _owner_in_scope(it.get("client_owner")):
             continue
-        rtype = p.get("return_type") or "Unclassified"
-        names = {_norm_assignee(a) for a in (p.get("assignees") or [])} or {"Unassigned"}
-        names = {n for n in names if n.lower() not in EXCLUDE_ASSIGNEES}
-        if not names:          # worked only by an excluded system account — drop it
+        key = (it.get("client", ""), _doc_type(it))
+        e = engagements.setdefault(key, {"open": False, "overdue": False, "names": set()})
+        if not _is_excluded_assignee(it.get("assignee")):
+            e["names"].add(_norm_assignee(it.get("assignee")))
+        if not it.get("closed"):
+            e["open"] = True
+            if it.get("overdue"):
+                e["overdue"] = True
+
+    for (client, rtype), e in engagements.items():
+        if not e["names"]:      # worked only by an excluded system account — drop it
             continue
-        is_overdue = bool(p.get("overdue"))
-        is_open = bool(p.get("open"))
-        for name in names:
+        for name in e["names"]:
             b = bucket(name)
-            if is_overdue:
+            if e["overdue"]:
                 b["overdue"] += 1
                 b["overdue_by_type"][rtype] += 1
-            if is_open:
+            if e["open"]:
                 b["open"] += 1
                 b["open_by_type"][rtype] += 1
 
@@ -314,8 +339,9 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
     per_staff.sort(key=lambda s: (s["assignee"] == "Unassigned",
                                   -s["count"], s["assignee"].lower()))
 
-    # Per staff (PROJECT level): the three-point summary the main page shows —
-    # staff name, their overdue-return total, and that total broken out by type.
+    # Per staff (client + work-type engagement level): the three-point summary
+    # the main page shows — staff name, their overdue-engagement total, and that
+    # total broken out by type.
     # Each staff row links to their own detail page (see build_staff_page). A
     # staff member appears if they have ANY Owen-owned open/overdue/just-completed
     # work this week, so every relevant person gets a row and a page.
@@ -356,8 +382,9 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
     Headline tiles (completed this week / open / overdue, plus open broken out by
     work type) come from _staff_project_stats — the SAME tallies the main page's
     summary row uses, so a staff member's numbers match between the two. Open and
-    overdue are project-level; completed-this-week is document-level (see
-    _staff_project_stats).
+    overdue count (client, work type) engagements, so a client's finished Payroll
+    work reads as done even while their Tax Return is still open; completed-this-
+    week is document-level (see _staff_project_stats).
     `last_import_date` MUST be the same value passed to build_review for this
     review, or a staff member's "completed this week" count would disagree with the
     main page's list. Returns a dict ready for review_staff.html, with two detail

@@ -261,14 +261,16 @@ def test_unassigned_sorted_last():
     assert r["per_staff"][-1]["assignee"] == "Unassigned"
 
 
-def test_only_nuno_owned_clients_included():
+def test_only_nuno_owned_and_blank_owner_clients_included():
+    # A blank Client Owner (never set in Karbon) must not silently drop a client
+    # out of the review -- only an explicitly DIFFERENT owner is excluded.
     r = _build([
         _item("a", "Acme", "W-2", 40, owner="Owen Bradfield"),
         _item("b", "Beta", "1099", 60, owner="Marcus Lorne"),      # other owner -> out
-        _item("c", "Ceta", "K-1", 50, owner=None),               # no owner -> out
+        _item("c", "Ceta", "K-1", 50, owner=None),               # blank owner -> included
     ])
-    assert [t["client"] for t in r["top"]] == ["Acme"]
-    assert r["total_overdue"] == 1
+    assert [t["client"] for t in r["top"]] == ["Ceta", "Acme"]
+    assert r["total_overdue"] == 2
 
 
 def test_no_correspondence_status_excluded_but_not_titles():
