@@ -47,6 +47,7 @@ import cloudflare_hardening
 import config
 import mailer
 import review_pdf
+import review_xlsx
 import vault
 from data import analytics, importer, review, service
 from data.store import Store
@@ -1677,6 +1678,12 @@ def build_current_review_pdf() -> dict:
     return rv
 
 
+def build_current_review_workbook() -> dict:
+    """The per-staff Excel worklists for right now, off the same cached dashboard
+    data every other view reads — so the workbook can't disagree with the screen."""
+    return review.build_staff_workbook(_get_data(), config.FIRM_NAME, datetime.now())
+
+
 @app.route("/review")
 @admin_required
 def weekly_review():
@@ -1707,6 +1714,23 @@ def weekly_review_pdf():
     disposition = "attachment" if request.args.get("download") else "inline"
     return Response(pdf, mimetype="application/pdf",
                     headers={"Content-Disposition": f'{disposition}; filename="{fname}"'})
+
+
+XLSX_MIMETYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@app.route("/review.xlsx")
+@admin_required
+def weekly_review_xlsx():
+    """The review as an Excel workbook with ONE TAB PER STAFF MEMBER — their open
+    work, grouped by work type, most overdue first (see review.build_staff_workbook).
+
+    Always a download: unlike the PDF there's nothing useful to view inline, and
+    browsers can't render a spreadsheet anyway."""
+    book = review_xlsx.render_xlsx(build_current_review_workbook())
+    fname = f"weekly-review-{date.today().isoformat()}.xlsx"
+    return Response(book, mimetype=XLSX_MIMETYPE,
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 # ---- Import flow ---------------------------------------------------------

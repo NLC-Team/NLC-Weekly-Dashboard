@@ -12,16 +12,20 @@
 
 <!-- Print / download controls -->
 <div class="card mb-2">
-  <div class="card-title">Print or save</div>
+  <div class="card-title">Print, save or export</div>
   <p class="text-muted mb-1" style="font-size:12px">
-    Opens a formatted PDF of both sections (built from the current data) in a new tab,
-    where you can print it or save it. The PDF is generated fresh each time, so it's
-    always up to date.
+    <strong>PDF</strong> opens a formatted copy of both sections (built from the current data)
+    in a new tab, where you can print it or save it.
+    <strong>Excel</strong> downloads a workbook with <strong>one tab per staff member</strong>:
+    every open item they own — client, work / project, status, work type, start and due dates —
+    grouped into work-type blocks with the most overdue at the top of each block.
+    Completed work is left out. Both are generated fresh each time, so they're always up to date.
   </p>
   <div class="row" style="gap:8px">
     <a href="{{ url_for('weekly_review_pdf') }}" target="_blank" rel="noopener"
        class="btn btn-primary">Print / Save as PDF</a>
     <a href="{{ url_for('weekly_review_pdf', download=1) }}" class="btn btn-secondary">Download PDF</a>
+    <a href="{{ url_for('weekly_review_xlsx') }}" class="btn btn-secondary">Export to Excel</a>
   </div>
 </div>
 

@@ -19,7 +19,7 @@ the `generated_at` passed in.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from config import normalize_return_type
 
@@ -378,6 +378,124 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
         "staff_rows": staff_rows,
         "total_overdue": len(overdue),
     }
+
+
+def _as_date(v) -> date | None:
+    """A stored date column as a real `date`, or None when blank/unparsable.
+    store.active_items already hands us `date` objects; tests and older rows can
+    still carry ISO strings, so accept both."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    try:
+        return date.fromisoformat(str(v)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def _start_date(it: dict) -> date | None:
+    """When the work started: the export's Start Date, else when we first saw the
+    row — the same fallback analytics.item_age_days and _opened_iso use, so the
+    Start column never disagrees with Days open."""
+    return _as_date(it.get("source_date")) or _as_date(it.get("first_seen"))
+
+
+def _xlsx_row(it: dict) -> dict:
+    """One spreadsheet row for the per-staff Excel export, at DOCUMENT grain.
+
+    Deliberately not _stmt_row: that one is built for the ranked report tables
+    (it carries `rank`/`opened` and has no status or due date). Dates stay as real
+    `date` objects so the writer can hand Excel real dates rather than text that
+    only looks like a date.
+
+    `work_type` is a LITERAL copy of the export's own Work Type cell for this
+    document (_doc_type -> normalize_return_type just trims it; blank reads
+    "Unclassified"). There is deliberately NO project-level type column: with no
+    Project column in a Karbon export, build_projects groups by CLIENT and gives
+    the whole client one type taken from its first non-blank document, so on real
+    data that value contradicts the document's own Work Type on ~64% of rows —
+    including clients whose collapsed type has no open work at all.
+    """
+    return {
+        "client": it.get("client", ""),
+        "title": it.get("title", ""),
+        "status": (it.get("status") or "").strip(),
+        "work_type": _doc_type(it),
+        "start_date": _start_date(it),
+        "due_date": _as_date(it.get("due_date")),
+        "days_overdue": it.get("days_overdue", 0),
+        "days_open": it.get("age_days", 0),
+        "assignee": _norm_assignee(it.get("assignee")),
+    }
+
+
+def build_staff_workbook(data: dict, firm_name: str, generated_at) -> dict:
+    """The weekly review as one worklist PER STAFF MEMBER, ready for Excel.
+
+    Same live data and the same scope as the rest of the review (_in_scope: Owen-
+    owned or blank-owner clients, no NO CORRESPONDENCE statuses, no Karbon Support),
+    but shaped as a worklist instead of a report:
+
+      * one row per DOCUMENT — nothing merged, so Title/Status/Start/Due are the
+        document's own values (a client with a 1040 Return and a State Return under
+        Tax: 1040 gets two rows);
+      * only OPEN work — `closed` covers both real completions and the closed-out
+        "Completed - Cancelled / - Not a fit / - Billed" statuses, and nothing is
+        due on either, so neither belongs on a worklist;
+      * grouped into work-type blocks, WORST OVERDUE FIRST inside each block and
+        the block holding the worst item first, so the top of every sheet is the
+        most urgent thing that person owns.
+
+    Grouping is by each document's OWN Work Type (_doc_type), not the project-merged
+    type — see _worktype_engagements for why the merged type misleads at row level.
+    Rows that aren't overdue yet still appear, with days_overdue 0, below the
+    overdue ones.
+
+    Returns:
+        {firm_name, generated_at,
+         sheets: [{assignee, open_count, overdue_count,
+                   groups: [{work_type, max_days_overdue, rows: [_xlsx_row, ...]}]}]}
+
+    Sheets are ordered most-overdue staff first (Unassigned always last), matching
+    the on-screen staff summary. Purely data — the openpyxl writing lives in
+    review_xlsx.py.
+    """
+    by_staff: dict[str, list] = {}
+    for it in data.get("items", []):
+        if it.get("closed") or not _in_scope(it):
+            continue
+        row = _xlsx_row(it)
+        by_staff.setdefault(row["assignee"], []).append(row)
+
+    sheets = []
+    for who, rows in by_staff.items():
+        groups: dict[str, list] = {}
+        for r in rows:
+            groups.setdefault(r["work_type"], []).append(r)
+        blocks = []
+        for wtype, grows in groups.items():
+            grows.sort(key=lambda r: (-r["days_overdue"], -r["days_open"],
+                                      r["client"].lower(), r["title"].lower()))
+            blocks.append({"work_type": wtype,
+                           "max_days_overdue": max(r["days_overdue"] for r in grows),
+                           "rows": grows})
+        # The work type holding this person's worst-overdue document leads; then the
+        # biggest pile; then alphabetical, so the order is stable across renders.
+        blocks.sort(key=lambda b: (-b["max_days_overdue"], -len(b["rows"]),
+                                   b["work_type"].lower()))
+        sheets.append({
+            "assignee": who,
+            "open_count": len(rows),
+            "overdue_count": sum(1 for r in rows if r["days_overdue"] > 0),
+            "groups": blocks,
+        })
+    sheets.sort(key=lambda s: (s["assignee"] == "Unassigned", -s["overdue_count"],
+                               -s["open_count"], s["assignee"].lower()))
+
+    return {"firm_name": firm_name, "generated_at": generated_at, "sheets": sheets}
 
 
 def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
