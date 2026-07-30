@@ -169,18 +169,11 @@ def _stmt_row(it: dict, rank: int) -> dict:
     }
 
 
-def _project_title_label(p: dict) -> str:
-    """A return can bundle several documents (grouping is client-level, see
-    analytics.build_projects) with different titles, e.g. "1040 Return" +
-    "State Return" -- join them the same way assignee_label joins staff names.
-
-    build_projects precomputes this as `title_label`; recompute it only for
-    callers (tests) that hand us a bare project dict without one."""
-    label = p.get("title_label")
-    if label:
-        return label
-    titles = sorted({d["title"].strip() for d in (p.get("documents") or [])
-                     if d.get("title", "").strip()})
+def _engagement_title_label(docs: list) -> str:
+    """A (client, work type) engagement can bundle several documents with
+    different titles, e.g. "1040 Return" + "State Return" -- join them the same
+    way assignee_label joins staff names."""
+    titles = sorted({d.get("title", "").strip() for d in docs if d.get("title", "").strip()})
     return (", ".join(titles) if len(titles) <= 2
             else f"{titles[0]} +{len(titles) - 1}")
 
@@ -192,9 +185,9 @@ def _types_list(counter) -> list:
             for t, c in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0].lower()))]
 
 
-def _staff_project_stats(data: dict, week_start: date, week_end: date) -> dict:
-    """Per-staff tallies over the Owen-owned work, at (client, work type) grain —
-    e.g. "Acme Corp / Payroll" and "Acme Corp / Tax: 1040" are tallied as two
+def _worktype_engagements(data: dict) -> dict:
+    """Groups Owen-owned (or blank-owner) items into (client, work type)
+    engagements — e.g. "Acme Corp / Payroll" and "Acme Corp / Tax: 1040" are two
     separate engagements, each open/overdue only if ITS OWN documents need work.
 
     Deliberately NOT `data["projects"]` (analytics.build_projects): a Karbon
@@ -202,14 +195,40 @@ def _staff_project_stats(data: dict, week_start: date, week_end: date) -> dict:
     to grouping EVERY document for a client into one bucket regardless of work
     type — one lingering open Tax Return then keeps an otherwise-finished Payroll
     engagement reading as "open" for the whole client, and the client's mixed bag
-    of types collapses into whichever type happened to come first. The Weekly
-    Review answers "is this work type done for this client", so it re-groups
-    `data["items"]` itself here, using each document's own type (`_doc_type`, the
-    export's raw Work Type column) rather than the merged project-level type.
+    of types collapses into whichever type happened to come first. Every Weekly
+    Review view that answers "is this work type done for this client" (the
+    open/overdue tallies AND the "recently overdue" list) re-groups `data["items"]`
+    here instead, using each document's own type (`_doc_type`, the export's raw
+    Work Type column) rather than the merged project-level type.
     NOTE: a manual project-type override set via Returns & Bookkeeping (for
     clients whose export type is blank) is a whole-client override tied to the
     old client-level grouping, so it does NOT carry over to this per-type view —
     such a client's undated documents still show as "Unclassified" here.
+
+    Returns (client, work_type) -> {open, overdue, days_overdue, names: set,
+    docs: list} — `days_overdue` is the worst overdue document in the engagement.
+    """
+    engagements: dict[tuple, dict] = {}
+    for it in data.get("items", []):
+        if not _owner_in_scope(it.get("client_owner")):
+            continue
+        key = (it.get("client", ""), _doc_type(it))
+        e = engagements.setdefault(key, {"open": False, "overdue": False,
+                                          "days_overdue": 0, "names": set(), "docs": []})
+        if not _is_excluded_assignee(it.get("assignee")):
+            e["names"].add(_norm_assignee(it.get("assignee")))
+        e["docs"].append(it)
+        if not it.get("closed"):
+            e["open"] = True
+            if it.get("overdue"):
+                e["overdue"] = True
+                e["days_overdue"] = max(e["days_overdue"], it.get("days_overdue", 0))
+    return engagements
+
+
+def _staff_project_stats(data: dict, week_start: date, week_end: date) -> dict:
+    """Per-staff tallies over the Owen-owned work, at (client, work type) grain
+    (see _worktype_engagements).
 
     Returns name -> {overdue, open, completed_week, overdue_by_type: Counter,
     open_by_type: Counter}. `overdue`/`open` count ENGAGEMENTS (client + work
@@ -225,20 +244,7 @@ def _staff_project_stats(data: dict, week_start: date, week_end: date) -> dict:
             "overdue_by_type": Counter(), "open_by_type": Counter(),
         })
 
-    engagements: dict[tuple, dict] = {}
-    for it in data.get("items", []):
-        if not _owner_in_scope(it.get("client_owner")):
-            continue
-        key = (it.get("client", ""), _doc_type(it))
-        e = engagements.setdefault(key, {"open": False, "overdue": False, "names": set()})
-        if not _is_excluded_assignee(it.get("assignee")):
-            e["names"].add(_norm_assignee(it.get("assignee")))
-        if not it.get("closed"):
-            e["open"] = True
-            if it.get("overdue"):
-                e["overdue"] = True
-
-    for (client, rtype), e in engagements.items():
+    for (client, rtype), e in _worktype_engagements(data).items():
         if not e["names"]:      # worked only by an excluded system account — drop it
             continue
         for name in e["names"]:
@@ -389,8 +395,8 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
     review, or a staff member's "completed this week" count would disagree with the
     main page's list. Returns a dict ready for review_staff.html, with two detail
     lists: their Top-N most overdue statements (worst first, document-level) and
-    their N most RECENTLY overdue PROJECTS (returns grouped client-level, like the
-    Returns & Bookkeeping tab — freshest first, i.e. the ones that just crossed the
+    their N most RECENTLY overdue (client, work type) ENGAGEMENTS (see
+    _worktype_engagements — freshest first, i.e. the ones that just crossed the
     overdue threshold, as a "newly at-risk" complement to the worst-first list).
     """
     gen_date = generated_at.date() if hasattr(generated_at, "date") else generated_at
@@ -405,27 +411,26 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
     def _mine(it: dict) -> bool:
         return _in_scope(it) and _norm_assignee(it.get("assignee")) == who
 
-    def _project_mine(p: dict) -> bool:
-        if not _owner_in_scope(p.get("client_owner")):
-            return False
-        names = {_norm_assignee(a) for a in (p.get("assignees") or [])} or {"Unassigned"}
-        names = {n for n in names if n.lower() not in EXCLUDE_ASSIGNEES}
-        return who in names
-
     overdue = sorted((it for it in data.get("overdue", []) if _mine(it)),
                      key=lambda it: (it.get("days_overdue", 0), it.get("age_days", 0)),
                      reverse=True)
     top_overdue = [_stmt_row(it, i + 1) for i, it in enumerate(overdue[:top_n])]
 
-    # Most recently overdue PROJECTS: smallest days_overdue first, i.e. the ones
-    # that most recently crossed the overdue threshold -- a "just went overdue"
-    # alert list, distinct from top_overdue's "longest-standing problem" ordering.
+    # Most recently overdue (client, work type) engagements: smallest days_overdue
+    # first, i.e. the ones that most recently crossed the overdue threshold -- a
+    # "just went overdue" alert list, distinct from top_overdue's "longest-standing
+    # problem" ordering. Same (client, work type) grouping as the headline tiles,
+    # so a client's finished Payroll work never shows up here just because their
+    # Tax Return is overdue.
     recent_overdue_projects = sorted(
-        (p for p in data.get("projects", []) if p.get("overdue") and _project_mine(p)),
+        ({"client": client, "return_type": rtype, "days_overdue": e["days_overdue"],
+          "title": _engagement_title_label(e["docs"])}
+         for (client, rtype), e in _worktype_engagements(data).items()
+         if e["overdue"] and who in e["names"]),
         key=lambda p: (p["days_overdue"], p["client"].lower()))
     recent_overdue = [
-        {"rank": i + 1, "client": p["client"], "title": _project_title_label(p),
-         "return_type": p.get("return_type", ""), "days_overdue": p["days_overdue"]}
+        {"rank": i + 1, "client": p["client"], "title": p["title"],
+         "return_type": p["return_type"], "days_overdue": p["days_overdue"]}
         for i, p in enumerate(recent_overdue_projects[:recent_n])
     ]
 
