@@ -245,6 +245,21 @@ def test_staff_page_recent_overdue_shows_each_document_separately():
     assert {r["title"] for r in sp["recent_overdue"]} == {"1040 Return", "State Return"}
 
 
+def test_staff_page_lists_show_each_documents_own_work_type():
+    # A staff page's per-document lists must show each document's OWN Work Type.
+    # _stmt_row defaults return_type to the PROJECT-merged type, which collapses a
+    # client's mixed work into one type (here both rows would read "Tax: 1040").
+    items = [
+        _item("a1", "Mixed", "1040 Return", 40, assignee="Sarah", rtype_raw="Tax: 1040"),
+        _item("a2", "Mixed", "Payroll Q3", 40, assignee="Sarah", rtype_raw="Payroll"),
+    ]
+    sp = review.build_staff_page(_data(items), "NLC", datetime(2026, 6, 29, 7, 0), "Sarah")
+    assert ({(r["title"], r["return_type"]) for r in sp["top_overdue"]}
+            == {("1040 Return", "Tax: 1040"), ("Payroll Q3", "Payroll")})
+    assert ({(r["title"], r["return_type"]) for r in sp["recent_overdue"]}
+            == {("1040 Return", "Tax: 1040"), ("Payroll Q3", "Payroll")})
+
+
 def test_staff_page_recent_overdue_capped_at_recent_n():
     items = [_item(str(i), f"Client{i:02d}", "Doc", 20 + i, assignee="Sarah")
              for i in range(15)]

@@ -116,11 +116,13 @@ def test_render_pdf_includes_completed_this_week_work_title():
 
 
 def test_render_pdf_staff_page_recent_overdue_projects():
-    # Smoke test: the staff page's right-hand table now shows "10 most recently
-    # overdue projects" with BOTH a DOCUMENT / WORK column and a RETURN TYPE
-    # column (instead of the old "most recent statements" DOCUMENT / WORK /
-    # OPENED shape) -- make sure a staff page with recent_overdue rows renders
-    # without error.
+    # Smoke test: the staff page's right-hand table, "10 most recently overdue
+    # projects", is drawn by _stmt_table with neither show_emp nor emp_key (see
+    # review_pdf.py's _staff_page), so it renders the plain #/CLIENT/DOCUMENT-
+    # WORK/DAYS-OVERDUE columns -- no separate RETURN TYPE or EMPLOYEE column.
+    # Each row here is a single document (one per document, not a joined
+    # multi-title engagement row) -- make sure a staff page with recent_overdue
+    # rows renders without error.
     rv = {
         "firm_name": "NLC Financial",
         "generated_at": datetime(2026, 6, 29, 7, 0),
@@ -144,7 +146,7 @@ def test_render_pdf_staff_page_recent_overdue_projects():
             "overdue_by_type": [{"type": "Tax: 1040", "count": 1}],
             "top_overdue": [{"rank": 1, "client": "Acme", "title": "W-2",
                              "days_overdue": 10}],
-            "recent_overdue": [{"rank": 1, "client": "Beta", "title": "1040 Return, State Return",
+            "recent_overdue": [{"rank": 1, "client": "Beta", "title": "1040 Return",
                                 "return_type": "Tax: 1040", "days_overdue": 2}],
         }],
     }

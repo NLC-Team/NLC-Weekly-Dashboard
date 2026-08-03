@@ -179,8 +179,18 @@ def _types_list(counter) -> list:
 def _staff_doc_stats(data: dict, week_start: date, week_end: date) -> dict:
     """Per-staff tallies over the Owen-owned work, at DOCUMENT grain — same
     scope and "open" definition as build_staff_workbook (the Excel export), so
-    a staff member's numbers here can never disagree with their own Excel
-    worklist.
+    a staff member's OPEN count and document lists here always agree with their
+    own Excel worklist. Two narrow exceptions, both confirmed on real data:
+      (a) OVERDUE count on a due-today document: this counts overdue via
+          `it["overdue"]`, but build_staff_workbook's overdue_count uses
+          `days_overdue > 0` — a document due exactly today has overdue=True
+          and days_overdue=0 (see analytics.enrich_items), so on that one
+          day the tile can show one more overdue than the Excel sheet. Open
+          counts and the document lists themselves always agree regardless.
+      (b) WHO APPEARS AT ALL: a staff member with completions this week but no
+          open work gets a screen row, detail page and PDF page here
+          (build_review keeps anyone with completed_week > 0), but no Excel
+          sheet at all (build_staff_workbook keys only on open documents).
 
     Returns name -> {overdue, open, completed_week, overdue_by_type: Counter,
     open_by_type: Counter}. `overdue`/`open` count DOCUMENTS currently assigned
@@ -303,7 +313,9 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
     # broken out by type. Counts only documents CURRENTLY assigned to that
     # person and still open/overdue — the same scope and definition
     # build_staff_workbook (the Excel) uses, so a staff member's numbers here
-    # can never disagree with their own Excel sheet.
+    # match their own Excel sheet with the two exceptions noted on
+    # _staff_doc_stats (a due-today overdue count; someone who only completed
+    # work this week gets no Excel sheet at all).
     # Each staff row links to their own detail page (see build_staff_page). A
     # staff member appears if they have ANY Owen-owned open/overdue/just-completed
     # work this week, so every relevant person gets a row and a page.
@@ -465,10 +477,12 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
     Headline tiles (completed this week / open / overdue, plus open/overdue
     broken out by work type) come from _staff_doc_stats — the SAME tallies the
     main page's summary row uses, so a staff member's numbers match between the
-    two, AND match their own Excel worklist (build_staff_workbook): open/overdue
-    count DOCUMENTS currently assigned to this person, not (client, work type)
-    engagements, so a person whose own piece of an engagement is done drops off
-    entirely even if a colleague still owns the rest of it.
+    two, AND match their own Excel worklist (build_staff_workbook), with the
+    two exceptions documented on _staff_doc_stats (a due-today overdue count;
+    completions-only staff get no Excel sheet). open/overdue count DOCUMENTS
+    currently assigned to this person, not (client, work type) engagements,
+    so a person whose own piece of an engagement is done drops off entirely
+    even if a colleague still owns the rest of it.
     `last_import_date` MUST be the same value passed to build_review for this
     review, or a staff member's "completed this week" count would disagree with the
     main page's list. Returns a dict ready for review_staff.html, with two detail
@@ -489,10 +503,17 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
     def _mine(it: dict) -> bool:
         return _in_scope(it) and _norm_assignee(it.get("assignee")) == who
 
+    def _doc_row(it: dict, rank: int) -> dict:
+        # This person's own lists are per-DOCUMENT, so the type column must be the
+        # document's own Work Type, not the project-merged type _stmt_row defaults to
+        # (see _doc_type -- the merged value contradicts the document's own type on
+        # most real rows).
+        return {**_stmt_row(it, rank), "return_type": _doc_type(it)}
+
     my_overdue = [it for it in data.get("overdue", []) if _mine(it)]
 
     top_overdue = [
-        _stmt_row(it, i + 1)
+        _doc_row(it, i + 1)
         for i, it in enumerate(sorted(
             my_overdue,
             key=lambda it: (it.get("days_overdue", 0), it.get("age_days", 0)),
@@ -502,12 +523,16 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
     # Freshest-overdue first (smallest days_overdue) -- the ones that most
     # recently crossed the overdue threshold, a "just went overdue" alert list,
     # distinct from top_overdue's "longest-standing problem" ordering. Same
-    # document set as top_overdue, just sorted the other way.
+    # document set as top_overdue, just sorted the other way. Tie-broken on
+    # title too (not just client) -- real staff members carry 44-155 overdue
+    # documents at a time, so days_overdue ties within the same client are
+    # common, and without a full tie-break the list can shuffle between renders.
     recent_overdue = [
-        _stmt_row(it, i + 1)
+        _doc_row(it, i + 1)
         for i, it in enumerate(sorted(
             my_overdue,
-            key=lambda it: (it.get("days_overdue", 0), it.get("client", "").lower()))[:recent_n])
+            key=lambda it: (it.get("days_overdue", 0), it.get("client", "").lower(),
+                            it.get("title", "").lower()))[:recent_n])
     ]
 
     return {

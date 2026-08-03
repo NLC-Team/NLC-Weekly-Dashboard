@@ -1680,7 +1680,9 @@ def build_current_review_pdf() -> dict:
 
 def build_current_review_workbook() -> dict:
     """The per-staff Excel worklists for right now, off the same cached dashboard
-    data every other view reads — so the workbook can't disagree with the screen."""
+    data every other view reads — so the workbook matches the screen, with the
+    two narrow exceptions documented on review._staff_doc_stats (a due-today
+    overdue count; someone who only completed work this week gets no sheet)."""
     return review.build_staff_workbook(_get_data(), config.FIRM_NAME, datetime.now())
 
 

@@ -203,12 +203,14 @@ def test_staff_with_only_completed_work_gets_no_sheet():
 
 
 def test_a_sheet_only_lists_documents_that_person_actually_owns():
-    # The reason a tab's row count is normally LOWER than the same person's "Open"
-    # tile on their Weekly Review page, verified against real firm data: the page
-    # counts (client, work type) ENGAGEMENTS and credits each one to EVERY assignee
-    # who touched it (see _staff_project_stats), so James is credited an open
-    # engagement here even though the only thing left open in it is Sarah's
-    # document. A worklist must not hand James a row for someone else's work.
+    # A sheet must contain only documents this person currently owns AND that are
+    # still open -- never a document that belongs to a different assignee just
+    # because it shares a client/work-type with something this person does own.
+    # James's document here is completed (closed), so it must not appear on his
+    # sheet, and he must not get a sheet at all just because Sarah's sibling
+    # document under the same client/work-type is still open. Both the Excel and
+    # the Weekly Review page now count at DOCUMENT grain, so a person's sheet row
+    # count matches their own "Open" tile on the Weekly Review page exactly.
     book = _book([
         _witem("james-part", "Acme", "Bookkeeping Jan", 40, due_in=-30,
                assignee="James", rtype_raw="Bookkeeping", status="Completed"),
