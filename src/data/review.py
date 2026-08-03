@@ -169,61 +169,11 @@ def _stmt_row(it: dict, rank: int) -> dict:
     }
 
 
-def _engagement_title_label(docs: list) -> str:
-    """A (client, work type) engagement can bundle several documents with
-    different titles, e.g. "1040 Return" + "State Return" -- join them the same
-    way assignee_label joins staff names."""
-    titles = sorted({d.get("title", "").strip() for d in docs if d.get("title", "").strip()})
-    return (", ".join(titles) if len(titles) <= 2
-            else f"{titles[0]} +{len(titles) - 1}")
-
-
 def _types_list(counter) -> list:
     """A Counter of {type: n} as [{type, count}, ...], most common first, ties
     broken alphabetically so the order is stable across renders."""
     return [{"type": t, "count": c}
             for t, c in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0].lower()))]
-
-
-def _worktype_engagements(data: dict) -> dict:
-    """Groups Owen-owned (or blank-owner) items into (client, work type)
-    engagements — e.g. "Acme Corp / Payroll" and "Acme Corp / Tax: 1040" are two
-    separate engagements, each open/overdue only if ITS OWN documents need work.
-
-    Deliberately NOT `data["projects"]` (analytics.build_projects): a Karbon
-    export usually has no per-return "Project" tag, so build_projects falls back
-    to grouping EVERY document for a client into one bucket regardless of work
-    type — one lingering open Tax Return then keeps an otherwise-finished Payroll
-    engagement reading as "open" for the whole client, and the client's mixed bag
-    of types collapses into whichever type happened to come first. Every Weekly
-    Review view that answers "is this work type done for this client" (the
-    open/overdue tallies AND the "recently overdue" list) re-groups `data["items"]`
-    here instead, using each document's own type (`_doc_type`, the export's raw
-    Work Type column) rather than the merged project-level type.
-    NOTE: a manual project-type override set via Returns & Bookkeeping (for
-    clients whose export type is blank) is a whole-client override tied to the
-    old client-level grouping, so it does NOT carry over to this per-type view —
-    such a client's undated documents still show as "Unclassified" here.
-
-    Returns (client, work_type) -> {open, overdue, days_overdue, names: set,
-    docs: list} — `days_overdue` is the worst overdue document in the engagement.
-    """
-    engagements: dict[tuple, dict] = {}
-    for it in data.get("items", []):
-        if not _owner_in_scope(it.get("client_owner")):
-            continue
-        key = (it.get("client", ""), _doc_type(it))
-        e = engagements.setdefault(key, {"open": False, "overdue": False,
-                                          "days_overdue": 0, "names": set(), "docs": []})
-        if not _is_excluded_assignee(it.get("assignee")):
-            e["names"].add(_norm_assignee(it.get("assignee")))
-        e["docs"].append(it)
-        if not it.get("closed"):
-            e["open"] = True
-            if it.get("overdue"):
-                e["overdue"] = True
-                e["days_overdue"] = max(e["days_overdue"], it.get("days_overdue", 0))
-    return engagements
 
 
 def _staff_doc_stats(data: dict, week_start: date, week_end: date) -> dict:
@@ -456,7 +406,10 @@ def build_staff_workbook(data: dict, firm_name: str, generated_at) -> dict:
         most urgent thing that person owns.
 
     Grouping is by each document's OWN Work Type (_doc_type), not the project-merged
-    type — see _worktype_engagements for why the merged type misleads at row level.
+    type — a Karbon export usually has no per-return Project tag, so build_projects
+    falls back to grouping every document for a client into one bucket regardless of
+    work type, which misleads at row level; every per-document view in this module
+    uses the document's own type instead.
     Rows that aren't overdue yet still appear, with days_overdue 0, below the
     overdue ones.
 

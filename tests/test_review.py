@@ -212,10 +212,10 @@ def test_completed_this_week_excludes_closed_other():
 
 
 def test_staff_page_recent_overdue_projects_sorted_freshest_first():
-    # "10 most recently overdue projects" = smallest days_overdue first (just
-    # crossed the threshold), grouped at PROJECT level -- distinct from
-    # top_overdue's document-level "worst first" ordering. Excludes non-overdue
-    # projects and other staff members' work.
+    # "10 most recently overdue" = smallest days_overdue first (just crossed the
+    # threshold), at DOCUMENT level -- same document set as top_overdue, just the
+    # opposite sort order. Excludes non-overdue documents and other staff members'
+    # work.
     items = [
         _item("a", "OldClient", "W-2", 60, assignee="Sarah"),      # long overdue
         _item("b", "FreshClient", "1099", 16, assignee="Sarah"),   # just overdue
