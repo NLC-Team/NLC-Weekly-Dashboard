@@ -232,16 +232,17 @@ def test_staff_page_recent_overdue_projects_sorted_freshest_first():
     assert rows[1]["title"] == "W-2"
 
 
-def test_staff_page_recent_overdue_joins_multiple_document_titles():
-    # A client can bundle several overdue documents under one client-level
-    # return (see analytics.build_projects); the title joins them the same way
-    # the Weekly Review PDF's Completed-this-week column does.
+def test_staff_page_recent_overdue_shows_each_document_separately():
+    # Two overdue documents under the same client no longer collapse into one
+    # joined-title row -- each document is its own row, matching top_overdue
+    # and the Excel worklist (build_staff_workbook).
     items = [
         _item("a1", "Multi", "1040 Return", 40, assignee="Sarah"),
         _item("a2", "Multi", "State Return", 40, assignee="Sarah"),
     ]
     sp = review.build_staff_page(_data(items), "NLC", datetime(2026, 6, 29, 7, 0), "Sarah")
-    assert sp["recent_overdue"][0]["title"] == "1040 Return, State Return"
+    assert len(sp["recent_overdue"]) == 2
+    assert {r["title"] for r in sp["recent_overdue"]} == {"1040 Return", "State Return"}
 
 
 def test_staff_page_recent_overdue_capped_at_recent_n():

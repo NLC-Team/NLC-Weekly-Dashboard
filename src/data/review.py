@@ -536,27 +536,25 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
     def _mine(it: dict) -> bool:
         return _in_scope(it) and _norm_assignee(it.get("assignee")) == who
 
-    overdue = sorted((it for it in data.get("overdue", []) if _mine(it)),
-                     key=lambda it: (it.get("days_overdue", 0), it.get("age_days", 0)),
-                     reverse=True)
-    top_overdue = [_stmt_row(it, i + 1) for i, it in enumerate(overdue[:top_n])]
+    my_overdue = [it for it in data.get("overdue", []) if _mine(it)]
 
-    # Most recently overdue (client, work type) engagements: smallest days_overdue
-    # first, i.e. the ones that most recently crossed the overdue threshold -- a
-    # "just went overdue" alert list, distinct from top_overdue's "longest-standing
-    # problem" ordering. Same (client, work type) grouping as the headline tiles,
-    # so a client's finished Payroll work never shows up here just because their
-    # Tax Return is overdue.
-    recent_overdue_projects = sorted(
-        ({"client": client, "return_type": rtype, "days_overdue": e["days_overdue"],
-          "title": _engagement_title_label(e["docs"])}
-         for (client, rtype), e in _worktype_engagements(data).items()
-         if e["overdue"] and who in e["names"]),
-        key=lambda p: (p["days_overdue"], p["client"].lower()))
+    top_overdue = [
+        _stmt_row(it, i + 1)
+        for i, it in enumerate(sorted(
+            my_overdue,
+            key=lambda it: (it.get("days_overdue", 0), it.get("age_days", 0)),
+            reverse=True)[:top_n])
+    ]
+
+    # Freshest-overdue first (smallest days_overdue) -- the ones that most
+    # recently crossed the overdue threshold, a "just went overdue" alert list,
+    # distinct from top_overdue's "longest-standing problem" ordering. Same
+    # document set as top_overdue, just sorted the other way.
     recent_overdue = [
-        {"rank": i + 1, "client": p["client"], "title": p["title"],
-         "return_type": p["return_type"], "days_overdue": p["days_overdue"]}
-        for i, p in enumerate(recent_overdue_projects[:recent_n])
+        _stmt_row(it, i + 1)
+        for i, it in enumerate(sorted(
+            my_overdue,
+            key=lambda it: (it.get("days_overdue", 0), it.get("client", "").lower()))[:recent_n])
     ]
 
     return {
@@ -564,7 +562,7 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
         "generated_at": generated_at,
         "week_start": week_start.isoformat(),
         "staff": who,
-        "found": bool(b["overdue"] or b["open"] or b["completed_week"] or recent_overdue_projects),
+        "found": bool(b["overdue"] or b["open"] or b["completed_week"]),
         "completed_week": b["completed_week"],
         "open": b["open"],
         "open_by_type": _types_list(b["open_by_type"]),
