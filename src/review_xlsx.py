@@ -102,14 +102,14 @@ _F_TITLE = Font(name=SERIF, size=14, bold=True, color=NAVY)
 _F_SUBTITLE = Font(name=SANS, size=9.5, color=MUTED)
 _F_BANNER = Font(name=SERIF, size=11.5, bold=True, color=WHITE)
 _F_HEADER = Font(name=SANS, size=9.5, bold=True, color=INK)
-_F_BODY = Font(name=SANS, size=10.5, color=INK)
-_F_CLIENT = Font(name=SANS, size=10.5, bold=True, color=INK)
-_F_NOTE = Font(name=SANS, size=10.5, italic=True, color=MUTED)
+_F_BODY = Font(name=SANS, size=12, color=INK)
+_F_CLIENT = Font(name=SANS, size=12, bold=True, color=INK)
+_F_NOTE = Font(name=SANS, size=12, italic=True, color=MUTED)
 _F_OVERDUE = {
-    "high": Font(name=SANS, size=10.5, bold=True, color=SEV_HIGH),
-    "mid": Font(name=SANS, size=10.5, bold=True, color=SEV_MID),
-    "low": Font(name=SANS, size=10.5, bold=True, color=INK),
-    "none": Font(name=SANS, size=10.5, color=MUTED),
+    "high": Font(name=SANS, size=12, bold=True, color=SEV_HIGH),
+    "mid": Font(name=SANS, size=12, bold=True, color=SEV_MID),
+    "low": Font(name=SANS, size=12, bold=True, color=INK),
+    "none": Font(name=SANS, size=12, color=MUTED),
 }
 _FILL_BANNER = PatternFill("solid", fgColor=NAVY)
 _FILL_HEADER = PatternFill("solid", fgColor=BAND)
@@ -120,7 +120,7 @@ _AL_HEADER_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True
 _AL_HEADER_RIGHT = Alignment(horizontal="right", vertical="center", wrap_text=True)
 _AL_BANNER = Alignment(horizontal="left", vertical="center", indent=1)
 
-ROW_H = 16.5        # a touch of air between rows; Excel's default is ~15
+ROW_H = 19.0         # a touch of air between rows; bumped up alongside the 12pt data font
 BANNER_H = 22.0
 HEADER_H = 18.0
 
