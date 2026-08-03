@@ -226,15 +226,19 @@ def _worktype_engagements(data: dict) -> dict:
     return engagements
 
 
-def _staff_project_stats(data: dict, week_start: date, week_end: date) -> dict:
-    """Per-staff tallies over the Owen-owned work, at (client, work type) grain
-    (see _worktype_engagements).
+def _staff_doc_stats(data: dict, week_start: date, week_end: date) -> dict:
+    """Per-staff tallies over the Owen-owned work, at DOCUMENT grain — same
+    scope and "open" definition as build_staff_workbook (the Excel export), so
+    a staff member's numbers here can never disagree with their own Excel
+    worklist.
 
     Returns name -> {overdue, open, completed_week, overdue_by_type: Counter,
-    open_by_type: Counter}. `overdue`/`open` count ENGAGEMENTS (client + work
-    type pairs), not individual documents. `completed_week` is DOCUMENT-level
-    over the trailing 7-day window, so it matches the headline "Completed this
-    week" list exactly.
+    open_by_type: Counter}. `overdue`/`open` count DOCUMENTS currently assigned
+    to that person, not (client, work type) engagements — a person whose own
+    document in an engagement is closed is NOT credited just because a
+    different assignee's document in that same engagement is still open.
+    `completed_week` is document-level over the trailing 7-day window, so it
+    matches the headline "Completed this week" list exactly.
     """
     stats: dict[str, dict] = {}
 
@@ -244,17 +248,16 @@ def _staff_project_stats(data: dict, week_start: date, week_end: date) -> dict:
             "overdue_by_type": Counter(), "open_by_type": Counter(),
         })
 
-    for (client, rtype), e in _worktype_engagements(data).items():
-        if not e["names"]:      # worked only by an excluded system account — drop it
+    for it in data.get("items", []):
+        if it.get("closed") or not _in_scope(it):
             continue
-        for name in e["names"]:
-            b = bucket(name)
-            if e["overdue"]:
-                b["overdue"] += 1
-                b["overdue_by_type"][rtype] += 1
-            if e["open"]:
-                b["open"] += 1
-                b["open_by_type"][rtype] += 1
+        rtype = _doc_type(it)
+        b = bucket(_norm_assignee(it.get("assignee")))
+        b["open"] += 1
+        b["open_by_type"][rtype] += 1
+        if it.get("overdue"):
+            b["overdue"] += 1
+            b["overdue_by_type"][rtype] += 1
 
     # Completions are counted per DOCUMENT and credited to that document's own
     # assignee — not spread across everyone who touched the return — so summing
@@ -345,13 +348,16 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
     per_staff.sort(key=lambda s: (s["assignee"] == "Unassigned",
                                   -s["count"], s["assignee"].lower()))
 
-    # Per staff (client + work-type engagement level): the three-point summary
-    # the main page shows — staff name, their overdue-engagement total, and that
-    # total broken out by type.
+    # Per staff (DOCUMENT level): the three-point summary the main page shows —
+    # staff name, their open/overdue-document totals, and the overdue total
+    # broken out by type. Counts only documents CURRENTLY assigned to that
+    # person and still open/overdue — the same scope and definition
+    # build_staff_workbook (the Excel) uses, so a staff member's numbers here
+    # can never disagree with their own Excel sheet.
     # Each staff row links to their own detail page (see build_staff_page). A
     # staff member appears if they have ANY Owen-owned open/overdue/just-completed
     # work this week, so every relevant person gets a row and a page.
-    pstats = _staff_project_stats(data, week_start, week_end)
+    pstats = _staff_doc_stats(data, week_start, week_end)
     staff_rows = []
     for name, b in pstats.items():
         if not (b["overdue"] or b["open"] or b["completed_week"]):
@@ -503,25 +509,26 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
                      last_import_date: date | None = None) -> dict:
     """One staff member's detail page for the weekly review (Owen-owned scope).
 
-    Headline tiles (completed this week / open / overdue, plus open broken out by
-    work type) come from _staff_project_stats — the SAME tallies the main page's
-    summary row uses, so a staff member's numbers match between the two. Open and
-    overdue count (client, work type) engagements, so a client's finished Payroll
-    work reads as done even while their Tax Return is still open; completed-this-
-    week is document-level (see _staff_project_stats).
+    Headline tiles (completed this week / open / overdue, plus open/overdue
+    broken out by work type) come from _staff_doc_stats — the SAME tallies the
+    main page's summary row uses, so a staff member's numbers match between the
+    two, AND match their own Excel worklist (build_staff_workbook): open/overdue
+    count DOCUMENTS currently assigned to this person, not (client, work type)
+    engagements, so a person whose own piece of an engagement is done drops off
+    entirely even if a colleague still owns the rest of it.
     `last_import_date` MUST be the same value passed to build_review for this
     review, or a staff member's "completed this week" count would disagree with the
     main page's list. Returns a dict ready for review_staff.html, with two detail
-    lists: their Top-N most overdue statements (worst first, document-level) and
-    their N most RECENTLY overdue (client, work type) ENGAGEMENTS (see
-    _worktype_engagements — freshest first, i.e. the ones that just crossed the
-    overdue threshold, as a "newly at-risk" complement to the worst-first list).
+    lists built from the same document set: their Top-N most overdue statements
+    (worst first) and their N most RECENTLY overdue statements (smallest
+    days_overdue first, i.e. the ones that just crossed the overdue threshold, as
+    a "newly at-risk" complement to the worst-first list).
     """
     gen_date = generated_at.date() if hasattr(generated_at, "date") else generated_at
     week_start, week_end = _completed_window(last_import_date or gen_date)
     who = _norm_assignee(staff_name)
 
-    b = _staff_project_stats(data, week_start, week_end).get(who, {
+    b = _staff_doc_stats(data, week_start, week_end).get(who, {
         "overdue": 0, "open": 0, "completed_week": 0,
         "overdue_by_type": Counter(), "open_by_type": Counter(),
     })

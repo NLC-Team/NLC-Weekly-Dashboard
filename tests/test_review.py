@@ -312,3 +312,53 @@ def test_per_staff_statements_capped_but_totals_complete():
     assert sarah["statements"][0]["rank"] == 1
     assert sarah["statements"][0]["days_overdue"] == (20 + 13) - 14  # worst first
     assert sum(t["count"] for t in sarah["types"]) == 14            # totals complete
+
+
+def test_staff_rows_count_documents_not_engagements():
+    # Two open documents of the same work type for one client must count as 2,
+    # not collapse into 1 (client, work type) engagement.
+    r = _build([
+        _item("a1", "Acme", "1040 Return", 20, assignee="Sarah", rtype_raw="Tax: 1040"),
+        _item("a2", "Acme", "State Return", 20, assignee="Sarah", rtype_raw="Tax: 1040"),
+    ])
+    sarah = next(s for s in r["staff_rows"] if s["assignee"] == "Sarah")
+    assert sarah["open"] == 2
+    assert sarah["overdue"] == 2
+    assert sarah["overdue_by_type"] == [{"type": "Tax: 1040", "count": 2}]
+
+
+def test_staff_rows_credit_only_current_assignee_not_past_touchers():
+    # Sarah's own document in this (client, work type) pair is done; Bob's
+    # document in the SAME pair is still open. Sarah must not be credited for
+    # Bob's still-open work just because she once touched this pair.
+    gen = datetime(2026, 6, 29, 7, 0)
+    items = [
+        _item("a1", "Acme", "1040 Return", 20, assignee="Sarah", rtype_raw="Tax: 1040",
+              status="Completed"),
+        _item("a2", "Acme", "State Return", 20, assignee="Bob", rtype_raw="Tax: 1040"),
+    ]
+    r = review.build_review(_data(items), "NLC", gen)
+    by_staff = {s["assignee"]: s for s in r["staff_rows"]}
+    assert "Sarah" not in by_staff          # her own piece is done -> drops off entirely
+    assert by_staff["Bob"]["open"] == 1
+    assert by_staff["Bob"]["overdue"] == 1
+
+
+def test_staff_page_credit_only_current_assignee():
+    # Same scenario as above, checked through build_staff_page's headline
+    # tiles (what the PDF and on-screen detail page both render).
+    gen = datetime(2026, 6, 29, 7, 0)
+    items = [
+        _item("a1", "Acme", "1040 Return", 20, assignee="Sarah", rtype_raw="Tax: 1040",
+              status="Completed"),
+        _item("a2", "Acme", "State Return", 20, assignee="Bob", rtype_raw="Tax: 1040"),
+    ]
+    data = _data(items)
+    sarah_page = review.build_staff_page(data, "NLC", gen, "Sarah")
+    assert sarah_page["open"] == 0
+    assert sarah_page["overdue"] == 0
+    assert sarah_page["open_by_type"] == []
+    bob_page = review.build_staff_page(data, "NLC", gen, "Bob")
+    assert bob_page["open"] == 1
+    assert bob_page["overdue"] == 1
+    assert bob_page["open_by_type"] == [{"type": "Tax: 1040", "count": 1}]
