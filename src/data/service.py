@@ -40,10 +40,13 @@ def import_csv(store: Store, path: str, mapping: dict, pending_statuses: list[st
 def dashboard_data(store: Store, today: date, overdue_days: int) -> dict:
     """Everything the views need, computed from current history + settings."""
     # Hide one assignee's property line-items from the WHOLE dashboard (see
-    # config.is_hidden_item). Filtered here, at the single source every view
-    # reads, so Overview/Overdue/Returns/Staff/Weekly Review all agree.
+    # config.is_hidden_item), and exclude internal/test clients entirely (see
+    # config.is_excluded_client). Filtered here, at the single source every
+    # view reads, so Overview/Overdue/Returns/Staff/Weekly Review/PDF/Excel
+    # all agree.
     active = [it for it in store.active_items()
-              if not config.is_hidden_item(it.get("assignee"), it.get("client"), it.get("title"))]
+              if not config.is_hidden_item(it.get("assignee"), it.get("client"), it.get("title"))
+              and not config.is_excluded_client(it.get("client"))]
     # Former/inactive staff (config.UNASSIGNED_STAFF_NAMES): their documents
     # still count everywhere, just under "Unassigned" instead of their name.
     # Same single-source principle as the hide filter above.

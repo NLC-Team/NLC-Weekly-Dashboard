@@ -33,6 +33,21 @@ def is_hidden_item(assignee, client, title) -> bool:
         return False
     return bool(_HIDDEN_ITEM_RE.search(f"{client or ''} {title or ''}"))
 
+# --- Excluded clients --------------------------------------------------------
+# Internal/test clients that should never appear anywhere on the dashboard, PDF,
+# or Excel exports. Matched by exact client name, case-insensitive/trimmed. Add
+# a name here (lowercase) if a new test/internal client shows up in an import.
+EXCLUDED_CLIENT_NAMES = {
+    "Anders, Jamie",
+    "nlc financial services, llc (internal)",
+    "Test, Sample",
+}
+
+
+def is_excluded_client(client) -> bool:
+    """True if this client should be hidden dashboard-wide (see EXCLUDED_CLIENT_NAMES)."""
+    return (client or "").strip().lower() in EXCLUDED_CLIENT_NAMES
+
 # Former/inactive staff whose few remaining documents should still count
 # everywhere on the dashboard (Overview, Overdue, Returns, Weekly Review, staff
 # dropdowns), just relabeled "Unassigned" rather than shown under their own
