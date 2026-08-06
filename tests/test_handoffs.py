@@ -110,3 +110,34 @@ def test_several_new_assignees_are_all_recorded(tmp_path):
         assert s.get_handoffs()["k_a"]["to_assignee"] == "Bob, Carol"
     finally:
         s.close()
+
+
+def test_import_csv_detects_handoffs_and_reports_the_count(tmp_path):
+    """A real import run records handoffs and reports them in its stats."""
+    import pandas as pd
+
+    from data import service
+
+    s = Store(tmp_path / "h.db")
+    try:
+        mapping = {"assignee": "Assignee", "client": "Client Name",
+                   "title": "Work Title", "status": "Status"}
+
+        def _write(path, assignee):
+            pd.DataFrame([{"Assignee": assignee, "Client Name": "Acme",
+                           "Work Title": "1040 Return",
+                           "Status": "In Progress"}]).to_csv(path, index=False)
+
+        day1 = tmp_path / "day1.csv"
+        day2 = tmp_path / "day2.csv"
+        _write(day1, "Alice")
+        _write(day2, "Bob")
+
+        first = service.import_csv(s, str(day1), mapping, [], DAY1)
+        assert first["handoffs"] == 0
+
+        second = service.import_csv(s, str(day2), mapping, [], DAY2)
+        assert second["handoffs"] == 1
+        assert [h["from_assignee"] for h in s.get_handoffs().values()] == ["Alice"]
+    finally:
+        s.close()

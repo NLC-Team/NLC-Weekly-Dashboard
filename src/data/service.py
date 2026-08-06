@@ -14,7 +14,9 @@ from data.store import Store
 
 def import_csv(store: Store, path: str, mapping: dict, pending_statuses: list[str],
                today: date, completed_statuses: list[str] | None = None) -> dict:
-    """Run a full import: parse -> persist EVERY row -> auto-complete. Returns stats.
+    """Run a full import: parse -> persist EVERY row -> detect handoffs -> auto-complete.
+
+    Returns stats.
 
     No status filtering: every mapped row is stored, so no data is silently
     dropped (the old 'pending statuses' drop is gone). `pending_statuses` is kept
@@ -27,6 +29,12 @@ def import_csv(store: Store, path: str, mapping: dict, pending_statuses: list[st
 
     # Import every row — nothing is filtered out.
     stats = store.upsert_items(records, today)
+    # Reassignments, BEFORE the completion sync. An item_key hashes
+    # client|title|assignee, so a reassigned document arrives as a new row and
+    # strands the old one; detect_handoffs closes that one out and credits its
+    # assignee. apply_import_completion is deliberately left to see the stale
+    # row exactly as it does today -- a handoff does not auto-complete a client.
+    handoffs = store.detect_handoffs(today)
     sync = store.apply_import_completion(completed_statuses, stats.get("new_keys", []), today)
     file_name = path.replace("\\", "/").split("/")[-1]
     store.record_import(file_name, len(df), len(records), today)
@@ -34,6 +42,7 @@ def import_csv(store: Store, path: str, mapping: dict, pending_statuses: list[st
     stats["imported"] = len(records)
     stats["auto_completed"] = sync["completed"]
     stats["reopened"] = sync["reopened"]
+    stats["handoffs"] = handoffs
     return stats
 
 
