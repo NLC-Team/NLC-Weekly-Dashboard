@@ -5,8 +5,13 @@ data. No database, no UI, no global state -- which is exactly why they are easy
 to unit-test. A "pending item" dict is expected to have these keys:
 
     assignee, client, title, status   -> str
-    first_seen                         -> datetime.date (when we first saw it pending)
-    source_date                        -> datetime.date | None (date from the CSV, if any)
+    first_seen                         -> datetime.date (the document's own start date
+                                          from the export; only a row with no start
+                                          date gets the import date instead. NOT the
+                                          date we imported it -- see store.py's module
+                                          docstring before reading it as provenance)
+    source_date                        -> datetime.date | None (start date from the
+                                          export, if any)
 
 `enrich_items` adds `age_days` and `overdue` to each item; the aggregation
 helpers below assume that enrichment has already happened.

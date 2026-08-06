@@ -1,9 +1,21 @@
 """SQLite persistence: settings, saved column mappings, and item history.
 
 History tracking is what lets the dashboard answer "how long has this been
-open?" even when the CSV has no useful date. Every import upserts the pending
-items; an item keeps its original `first_seen`, and anything that stops
-appearing is marked resolved (i.e. it was sent/completed).
+open?" even when the export has no useful date.
+
+`first_seen` IS NOT IMPORT PROVENANCE, despite the name. It holds the
+document's own start date from the export (`source_date`); only when a row has
+no start date does it fall back to the date of the import that stored it (see
+upsert_items). Real Karbon exports always carry a start date, so in practice it
+equals `source_date` -- it can even be a FUTURE date, and it is set once at
+insert and never revised, so a later export changing a row's start date leaves
+`first_seen` on the old value. Nothing on the items table records which import
+created a row; the per-import "N new, M updated" counts live in `audit_log`.
+
+Imports are ADDITIVE: an item missing from a later export is left untouched and
+stays active, so a partial file never wipes earlier data. The `resolved` column
+is vestigial -- `active_items` still filters on `resolved=0`, but nothing ever
+sets it to 1; work is removed by a hard delete instead (see delete_project).
 """
 from __future__ import annotations
 
