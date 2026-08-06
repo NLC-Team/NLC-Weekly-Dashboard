@@ -93,6 +93,10 @@ def get_store() -> Store:
     global _store
     if _store is None:
         _store = Store(config.active_db_path())
+        # One-time sweep for reassignments that predate handoff detection (see
+        # Store.backfill_handoffs). Self-guarding, so this is a cheap no-op on
+        # every start after the first.
+        _store.backfill_handoffs()
     return _store
 
 

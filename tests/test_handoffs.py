@@ -324,3 +324,43 @@ def test_staff_page_reports_the_handoff_split():
     assert sp["completed_week"] == 1
     assert sp["handoff_week"] == 1
     assert sp["open"] == 0
+
+
+def test_backfill_credits_the_import_that_followed_the_stale_row(tmp_path):
+    """Handoffs that predate detection are dated the NEXT import after the
+    stale row's last_seen -- the day the change actually showed up."""
+    s = Store(tmp_path / "h.db")
+    try:
+        s.upsert_items([_rec("k_a", "Acme", "1040 Return", "Alice")], DAY1)
+        s.record_import("day1.xlsx", 1, 1, DAY1)
+        s.upsert_items([_rec("k_b", "Acme", "1040 Return", "Bob")], DAY2)
+        s.record_import("day2.xlsx", 1, 1, DAY2)
+
+        assert s.backfill_handoffs() == 1
+        assert s.get_handoffs()["k_a"]["handed_at"] == "2026-06-30"
+    finally:
+        s.close()
+
+
+def test_backfill_runs_only_once(tmp_path):
+    s = Store(tmp_path / "h.db")
+    try:
+        s.upsert_items([_rec("k_a", "Acme", "1040 Return", "Alice")], DAY1)
+        s.record_import("day1.xlsx", 1, 1, DAY1)
+        s.upsert_items([_rec("k_b", "Acme", "1040 Return", "Bob")], DAY2)
+        s.record_import("day2.xlsx", 1, 1, DAY2)
+
+        assert s.backfill_handoffs() == 1
+        assert s.backfill_handoffs() == 0
+        assert len(s.get_handoffs()) == 1
+    finally:
+        s.close()
+
+
+def test_backfill_with_no_import_history_is_a_no_op(tmp_path):
+    s = Store(tmp_path / "h.db")
+    try:
+        assert s.backfill_handoffs() == 0
+        assert s.get_setting("handoffs_backfilled") is True
+    finally:
+        s.close()

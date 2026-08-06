@@ -636,6 +636,36 @@ class Store:
                        for k, frm, to, _last_seen in self._handoff_candidates(iso)]
             return self._write_handoffs(payload)
 
+    def backfill_handoffs(self) -> int:
+        """Record the handoffs that happened BEFORE detection existed. Runs once.
+
+        Detection only started running on imports, so every reassignment already
+        in the database (134 on the live data as of 2026-08-04) has a stranded
+        row nobody was ever credited for, still counting as that person's open
+        work. This sweeps them with the same rules, judged against the most
+        recent import.
+
+        Each row is dated the earliest import STRICTLY AFTER its own last_seen
+        -- the import that actually revealed the change -- falling back to its
+        last_seen if there is no later one. Guarded by the `handoffs_backfilled`
+        setting, which is written even when there is nothing to do, so this
+        never runs twice.
+        """
+        if self.get_setting("handoffs_backfilled"):
+            return 0
+        with self._write_lock:
+            dates = sorted({r["imported_at"] for r in self.conn.execute(
+                "SELECT imported_at FROM imports") if r["imported_at"]})
+            n = 0
+            if dates:
+                payload = []
+                for key, frm, to, last_seen in self._handoff_candidates(dates[-1]):
+                    after = next((d for d in dates if d > last_seen), last_seen)
+                    payload.append((key, frm, to, after))
+                n = self._write_handoffs(payload)
+            self.set_setting("handoffs_backfilled", True)
+            return n
+
     def get_handoffs(self) -> dict:
         """item_key -> {from_assignee, to_assignee, handed_at} for every handoff."""
         rows = self.conn.execute(
