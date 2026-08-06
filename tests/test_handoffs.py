@@ -208,3 +208,119 @@ def test_handoff_does_not_change_the_per_client_completed_count(tmp_path):
         assert data["project_totals"]["completed_total"] == 0
     finally:
         s.close()
+
+
+# ---- Weekly Review credit ---------------------------------------------------
+# These build review data directly (like tests/test_review.py) rather than
+# through the Store, so the window arithmetic is explicit. test_review's `_item`
+# and `_data` are reused so the item shape and the dashboard_data mirror can
+# never drift between the two files.
+#
+# NOTE: `tests/` has no __init__.py, so pytest puts that directory itself on
+# sys.path -- import the module bare (`from test_review import ...`), never as
+# `tests.test_review`, which does not resolve.
+from datetime import datetime           # noqa: E402
+
+from data import review as review_mod    # noqa: E402
+from test_review import _data as _review_data, _item as _review_item  # noqa: E402
+
+REVIEW_TODAY = date(2026, 6, 29)
+
+
+def _ritem(key, client, title, assignee, days=30, status="In Progress",
+           completed_date=None):
+    return _review_item(key, client, title, days, assignee=assignee,
+                        status=status, completed_date=completed_date)
+
+
+def _rdata(items, handoffs=None):
+    return _review_data(items, handoffs=handoffs)
+
+
+def _handoff(item_key, to, when):
+    return {item_key: {"from_assignee": "", "to_assignee": to, "handed_at": when}}
+
+
+def test_previous_assignee_is_credited_and_the_new_one_is_not():
+    items = [_ritem("k_a", "Acme", "1040 Return", "Alice"),
+             _ritem("k_b", "Acme", "1040 Return", "Bob")]
+    data = _rdata(items, handoffs=_handoff("k_a", "Bob", "2026-06-29"))
+    rv = review_mod.build_review(data, "NLC Financial",
+                                 datetime(2026, 6, 29, 7, 0),
+                                 last_import_date=REVIEW_TODAY)
+
+    rows = {r["assignee"]: r for r in rv["staff_rows"]}
+    assert rows["Alice"]["completed_week"] == 1
+    assert rows["Alice"]["handoff_week"] == 1
+    assert rows["Bob"]["completed_week"] == 0
+    assert rows["Bob"]["open"] == 1          # Bob still holds the live document
+    assert rows["Alice"]["open"] == 0        # ...and it left Alice's plate
+
+
+def test_handoff_appears_in_the_firm_list_labelled():
+    items = [_ritem("k_a", "Acme", "1040 Return", "Alice"),
+             _ritem("k_b", "Acme", "1040 Return", "Bob")]
+    data = _rdata(items, handoffs=_handoff("k_a", "Bob", "2026-06-29"))
+    rv = review_mod.build_review(data, "NLC Financial",
+                                 datetime(2026, 6, 29, 7, 0),
+                                 last_import_date=REVIEW_TODAY)
+
+    assert len(rv["completed_this_week"]) == 1
+    row = rv["completed_this_week"][0]
+    assert row["kind"] == "handoff"
+    assert row["handed_to"] == "Bob"
+    assert row["assignee"] == "Alice"
+    assert row["completed_at"] == "2026-06-29"
+
+
+def test_staff_credits_still_sum_to_the_firm_total():
+    items = [_ritem("k_a", "Acme", "1040 Return", "Alice"),
+             _ritem("k_b", "Acme", "1040 Return", "Bob"),
+             _ritem("k_c", "Beta", "1120 Return", "Carol", status="Completed",
+                    completed_date=date(2026, 6, 28))]
+    data = _rdata(items, handoffs=_handoff("k_a", "Bob", "2026-06-29"))
+    rv = review_mod.build_review(data, "NLC Financial",
+                                 datetime(2026, 6, 29, 7, 0),
+                                 last_import_date=REVIEW_TODAY)
+
+    assert len(rv["completed_this_week"]) == 2       # one real, one handoff
+    assert sum(r["completed_week"] for r in rv["staff_rows"]) == 2
+    kinds = {r["assignee"]: r["kind"] for r in rv["completed_this_week"]}
+    assert kinds == {"Alice": "handoff", "Carol": "completed"}
+
+
+def test_handoff_outside_the_window_is_not_counted():
+    items = [_ritem("k_a", "Acme", "1040 Return", "Alice"),
+             _ritem("k_b", "Acme", "1040 Return", "Bob")]
+    # 8 days before the import date -- the window is the trailing 7.
+    data = _rdata(items, handoffs=_handoff("k_a", "Bob", "2026-06-21"))
+    rv = review_mod.build_review(data, "NLC Financial",
+                                 datetime(2026, 6, 29, 7, 0),
+                                 last_import_date=REVIEW_TODAY)
+    assert rv["completed_this_week"] == []
+
+
+def test_out_of_scope_owner_handoff_is_not_counted():
+    # Marcus Lorne-owned clients are outside the review's scope (_in_scope).
+    items = [_ritem("k_a", "Acme", "1040 Return", "Alice"),
+             _ritem("k_b", "Acme", "1040 Return", "Bob")]
+    for it in items:
+        it["client_owner"] = "Marcus Lorne"
+    data = _rdata(items, handoffs=_handoff("k_a", "Bob", "2026-06-29"))
+    rv = review_mod.build_review(data, "NLC Financial",
+                                 datetime(2026, 6, 29, 7, 0),
+                                 last_import_date=REVIEW_TODAY)
+    assert rv["completed_this_week"] == []
+
+
+def test_staff_page_reports_the_handoff_split():
+    items = [_ritem("k_a", "Acme", "1040 Return", "Alice"),
+             _ritem("k_b", "Acme", "1040 Return", "Bob")]
+    data = _rdata(items, handoffs=_handoff("k_a", "Bob", "2026-06-29"))
+    sp = review_mod.build_staff_page(data, "NLC Financial",
+                                     datetime(2026, 6, 29, 7, 0), "Alice",
+                                     last_import_date=REVIEW_TODAY)
+    assert sp["found"] is True
+    assert sp["completed_week"] == 1
+    assert sp["handoff_week"] == 1
+    assert sp["open"] == 0

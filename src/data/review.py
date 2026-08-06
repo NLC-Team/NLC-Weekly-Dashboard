@@ -117,6 +117,24 @@ def _completed_in_window(it: dict, start: date, end: date) -> bool:
     return _in_scope(it)
 
 
+def _handed_in_window(it: dict, start: date, end: date) -> bool:
+    """True when this document was HANDED OFF inside the window.
+
+    A handoff is Karbon moving the work to somebody else, which strands the
+    previous assignee's row (see store.detect_handoffs). It counts as that
+    person finishing their share: they get one credit, dated the import that
+    detected the change. The document itself is NOT finished -- the new
+    assignee's row is still open -- so it is labelled as a handoff everywhere
+    it is listed, and it never touches the per-client completed figure.
+    """
+    if not it.get("handed_off"):
+        return False
+    ha = _as_date(it.get("handed_at"))
+    if ha is None or not (start <= ha <= end):
+        return False
+    return _in_scope(it)
+
+
 def _norm_assignee(a) -> str:
     """Normalize a staff name the same way build_projects does: blank or the
     importer's literal "(unassigned)" both read as a single "Unassigned"."""
@@ -192,19 +210,24 @@ def _staff_doc_stats(data: dict, week_start: date, week_end: date) -> dict:
           (build_review keeps anyone with completed_week > 0), but no Excel
           sheet at all (build_staff_workbook keys only on open documents).
 
-    Returns name -> {overdue, open, completed_week, overdue_by_type: Counter,
-    open_by_type: Counter}. `overdue`/`open` count DOCUMENTS currently assigned
-    to that person, not (client, work type) engagements — a person whose own
-    document in an engagement is closed is NOT credited just because a
-    different assignee's document in that same engagement is still open.
-    `completed_week` is document-level over the trailing 7-day window, so it
-    matches the headline "Completed this week" list exactly.
+    Returns name -> {overdue, open, completed_week, handoff_week,
+    overdue_by_type: Counter, open_by_type: Counter}. `overdue`/`open` count
+    DOCUMENTS currently assigned to that person, not (client, work type)
+    engagements — a person whose own document in an engagement is closed is
+    NOT credited just because a different assignee's document in that same
+    engagement is still open. `completed_week` is document-level over the
+    trailing 7-day window, so it matches the headline "Completed this week"
+    list exactly.
+
+    `completed_week` includes HANDOFFS -- work Karbon moved to somebody else
+    this week, which counts as that person finishing their share (see
+    _handed_in_window); `handoff_week` is how many of the total those were.
     """
     stats: dict[str, dict] = {}
 
     def bucket(name: str) -> dict:
         return stats.setdefault(name, {
-            "overdue": 0, "open": 0, "completed_week": 0,
+            "overdue": 0, "open": 0, "completed_week": 0, "handoff_week": 0,
             "overdue_by_type": Counter(), "open_by_type": Counter(),
         })
 
@@ -223,9 +246,14 @@ def _staff_doc_stats(data: dict, week_start: date, week_end: date) -> dict:
     # assignee — not spread across everyone who touched the return — so summing
     # every staff member's completed_week reproduces the headline total.
     for it in data.get("items", []):
-        if not _completed_in_window(it, week_start, week_end):
-            continue
-        bucket(_norm_assignee(it.get("assignee")))["completed_week"] += 1
+        # A real completion wins over a handoff when a row somehow qualifies as
+        # both, so a document can only ever earn ONE credit.
+        if _completed_in_window(it, week_start, week_end):
+            bucket(_norm_assignee(it.get("assignee")))["completed_week"] += 1
+        elif _handed_in_window(it, week_start, week_end):
+            b = bucket(_norm_assignee(it.get("assignee")))
+            b["completed_week"] += 1
+            b["handoff_week"] += 1
     return stats
 
 
@@ -238,6 +266,8 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
           top: [ {rank, client, title, return_type, days_overdue, days_open, assignee}, ... ],
           per_staff: [ {assignee, count, statements: [ {rank, client, title, ...}, ... up to
                         per_staff_limit ], types: [ {type, count}, ... ]}, ... ],
+          staff_rows: [ {assignee, overdue, open, completed_week, handoff_week,
+                        overdue_by_type: [ {type, count}, ... ]}, ... ],
           total_overdue: int,   # overdue statements firm-wide (matches Overdue tab)
         }
 
@@ -255,18 +285,31 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
     # `last_import_date` is the caller's source of truth (webapp.py passes
     # store.last_import()); fall back to `generated_at` when there's no import
     # history yet (e.g. a brand-new database).
+    # Handoffs count here too, labelled `kind: "handoff"`: Karbon reassigning a
+    # document credits the person who had it, since their share is finished.
     gen_date = generated_at.date() if hasattr(generated_at, "date") else generated_at
     week_start, week_end = _completed_window(last_import_date or gen_date)
     completed_week = []
     for it in data.get("items", []):
-        if not _completed_in_window(it, week_start, week_end):
+        # `kind` separates the two ways a document leaves someone's plate:
+        # "completed" -- genuinely finished; "handoff" -- Karbon moved it to
+        # somebody else, so this person's share is done but the client's work
+        # is not. Both credit one person once; the checks are exclusive so a
+        # row that somehow qualifies as both is only ever counted as completed.
+        if _completed_in_window(it, week_start, week_end):
+            kind, when, to = "completed", _completed_date(it).isoformat(), None
+        elif _handed_in_window(it, week_start, week_end):
+            kind, when, to = "handoff", str(it.get("handed_at"))[:10], it.get("handed_to")
+        else:
             continue
         completed_week.append({
             "client": it.get("client", ""),
             "title": it.get("title", ""),
             "return_type": _doc_type(it),
             "assignee": _norm_assignee(it.get("assignee")),
-            "completed_at": _completed_date(it).isoformat(),
+            "completed_at": when,
+            "kind": kind,
+            "handed_to": to,
         })
     # Newest first, then client/title so same-day rows have a stable order.
     completed_week.sort(key=lambda r: (r["completed_at"], r["client"].lower(),
@@ -329,6 +372,7 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
             "overdue": b["overdue"],
             "open": b["open"],
             "completed_week": b["completed_week"],
+            "handoff_week": b["handoff_week"],
             "overdue_by_type": _types_list(b["overdue_by_type"]),
         })
     staff_rows.sort(key=lambda s: (s["assignee"] == "Unassigned",
@@ -496,7 +540,7 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
     who = _norm_assignee(staff_name)
 
     b = _staff_doc_stats(data, week_start, week_end).get(who, {
-        "overdue": 0, "open": 0, "completed_week": 0,
+        "overdue": 0, "open": 0, "completed_week": 0, "handoff_week": 0,
         "overdue_by_type": Counter(), "open_by_type": Counter(),
     })
 
@@ -542,6 +586,7 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
         "staff": who,
         "found": bool(b["overdue"] or b["open"] or b["completed_week"]),
         "completed_week": b["completed_week"],
+        "handoff_week": b["handoff_week"],
         "open": b["open"],
         "open_by_type": _types_list(b["open_by_type"]),
         "overdue": b["overdue"],
