@@ -179,3 +179,55 @@ def test_pdf_marks_a_handoff_row_in_its_own_column():
     }
     pdf = review_pdf.render_pdf(rv)
     assert pdf[:4] == b"%PDF"
+
+
+def test_fit_shortens_text_to_the_width_it_is_given():
+    """A long bold client name must not render past the width allowed."""
+    wide = "WATSON WOODWORKING MANUFACTURING CO"
+    avail = review_pdf._DONE_COLS["title"] - review_pdf._DONE_COLS["client"] \
+        - review_pdf._COL_GUTTER
+    fitted = review_pdf._fit(wide, avail, size=10, weight="bold")
+    assert fitted != wide                       # it really was too wide
+    assert fitted.endswith("…")
+    assert review_pdf._text_width(fitted, 10, "bold") <= avail
+
+
+def test_fit_leaves_text_that_already_fits_untouched():
+    assert review_pdf._fit("Acme", 0.5, size=10) == "Acme"
+    assert review_pdf._fit("", 0.5, size=10) == ""
+
+
+def test_done_table_columns_never_overlap_for_long_values():
+    """Every column of the rendered done table stays inside its own space,
+    measured rather than counted — the defect Task 5's review found."""
+    rv = {
+        "firm_name": "NLC Financial",
+        "generated_at": datetime(2026, 6, 29, 7, 0),
+        "week_start": "2026-06-23",
+        "top_n": 10, "total_overdue": 0,
+        "completed_this_week": [
+            {"client": "WATSON WOODWORKING MANUFACTURING CO",
+             "title": "2025 Business Tax Return and Extension",
+             "return_type": "Tax: 1120 Corporation Return",
+             "assignee": "Nadia Alverson",
+             "completed_at": "2026-06-29",
+             "kind": "handoff", "handed_to": "Owen Bradfield"},
+        ],
+        "top": [], "recent": [], "per_staff": [], "staff_rows": [],
+        "staff_pages": [],
+    }
+    assert review_pdf.render_pdf(rv)[:4] == b"%PDF"
+
+    cols = review_pdf._DONE_COLS
+    row = rv["completed_this_week"][0]
+    checks = [
+        (row["client"], cols["client"], cols["title"], 10, "bold"),
+        (row["title"], cols["title"], cols["type"], 10, "normal"),
+        (row["return_type"], cols["type"], cols["emp"], 10, "normal"),
+        (row["assignee"], cols["emp"], cols["outcome"], 10, "normal"),
+    ]
+    for value, x, next_x, size, weight in checks:
+        avail = next_x - x - review_pdf._COL_GUTTER
+        drawn = review_pdf._fit(value, avail, size=size, weight=weight)
+        assert review_pdf._text_width(drawn, size, weight) <= avail, \
+            f"{value!r} overflows its column"

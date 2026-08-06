@@ -27,7 +27,9 @@ matplotlib.use("Agg")
 matplotlib.rcParams["font.family"] = ["Times New Roman", "serif"]
 from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
+from matplotlib.font_manager import FontProperties  # noqa: E402
 from matplotlib.patches import Rectangle  # noqa: E402
+from matplotlib.textpath import TextPath  # noqa: E402
 
 # Letterhead palette (shared with the dashboard charts).
 NAVY = "#1a3f8f"
@@ -67,6 +69,59 @@ TYPE_MAX_H = 13 * TYPE_ROW_H
 def _truncate(s: str, n: int) -> str:
     s = str(s or "")
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+# Blank space kept between a fitted cell's text and the next column, so a value
+# measured to fit exactly still reads with a little daylight before the neighbour.
+_COL_GUTTER = 0.008
+
+
+def _text_width(s: str, size: float, weight: str = "normal") -> float:
+    """Rendered width of `s`, in the same 0..1 page-fraction units the tables
+    position their columns with.
+
+    Measured with TextPath rather than a canvas renderer: the pages are drawn
+    on bare `Figure` objects that only get a canvas when PdfPages saves them,
+    so there is no renderer to ask while a row is being laid out. TextPath
+    resolves the same font (and the same fallback when Times is absent, which
+    it is on the deployment box) that `ax.text` will use, so the measurement
+    and the drawing agree.
+
+    `_Doc._new_page` puts axes at `add_axes([0, 0, 1, 1])` with xlim/ylim
+    `(0, 1)` — the axes data coordinates ARE figure fractions, one-for-one, so
+    no extra scaling beyond points -> inches -> /PAGE_W is needed. Checked
+    empirically against `ax.text(...).get_window_extent()` on a real rendered
+    Figure (same font, same fallback): the two methods agree to within ~1%,
+    comfortably inside the gutter kept between columns.
+    """
+    if not s:
+        return 0.0
+    fp = FontProperties(family=matplotlib.rcParams["font.family"], weight=weight)
+    path = TextPath((0, 0), str(s), size=size, prop=fp)
+    width_pts = path.get_extents().width
+    return (width_pts / 72.0) / PAGE_W
+
+
+def _fit(s, max_width: float, size: float = 10.0, weight: str = "normal") -> str:
+    """`s` shortened until it fits `max_width` page-fractions, ellipsised.
+
+    Replaces character-count truncation, which cannot see that a proportional
+    bold font renders "WATSON WOODWORKING MANU…" wider than the column it was
+    counted to fit. Drops characters one at a time from the end (these are
+    short cell strings, so the linear scan is cheap) rather than assuming
+    width is a strictly monotonic function of length — safer than a binary
+    search for arbitrary text.
+    """
+    s = str(s or "")
+    if not s:
+        return ""
+    if _text_width(s, size, weight) <= max_width:
+        return s
+    for k in range(len(s) - 1, 0, -1):
+        candidate = s[:k] + "…"
+        if _text_width(candidate, size, weight) <= max_width:
+            return candidate
+    return "…"
 
 
 class _Doc:
@@ -301,7 +356,13 @@ def _stmt_row(doc: _Doc, cols: dict, r: dict, last_val: str, striped: bool, doc_
         doc.band(_ROW, x0=cols["rank"] - 0.012, x1=cols["last"])
     cy = base + _ROW * 0.5          # vertical center of the row, so text sits inside the band
     doc.text(cols["rank"], str(r["rank"]), size=9.5, weight="bold", color=NAVY, ha="right", y=cy, va="center")
-    doc.text(cols["client"], _truncate(r["client"], cols["client_chars"]), size=9.5, y=cy, va="center")
+    # CLIENT is measured, not counted: a plausible worst-case ALL-CAPS entity
+    # name ("WATSON WOODWORKING MANUFACTURING CO") overlaps DOCUMENT / WORK
+    # under char-count truncation in every one of this table's geometries
+    # (measured — see task 5b report). DOCUMENT / WORK and EMPLOYEE stay on
+    # _truncate below: measured clean for plausible values, so left alone.
+    client_avail = cols["doc"] - cols["client"] - _COL_GUTTER
+    doc.text(cols["client"], _fit(r["client"], client_avail, size=9.5), size=9.5, y=cy, va="center")
     doc.text(cols["doc"], _truncate(r["title"] if doc_val is None else doc_val, cols["doc_chars"]),
              size=9.5, color=MUTED, y=cy, va="center")
     if cols.get("show_emp"):
@@ -463,13 +524,36 @@ def _summary_page(doc: _Doc, rv: dict):
                 doc.band(LINE)
             cy = base + LINE * 0.5      # center the row text within its band
             handoff = r.get("kind") == "handoff"
-            doc.text(_DONE_COLS["client"], _truncate(r["client"], 24), size=10, weight="bold", y=cy, va="center")
-            doc.text(_DONE_COLS["title"], _truncate(r.get("title", ""), 24), size=10, color=MUTED, y=cy, va="center")
-            doc.text(_DONE_COLS["type"], _truncate(r["return_type"], 20), size=10, color=MUTED, y=cy, va="center")
-            doc.text(_DONE_COLS["emp"], _truncate(r["assignee"], 18), size=10, color=MUTED, y=cy, va="center")
-            doc.text(_DONE_COLS["outcome"], "Handoff" if handoff else "Completed",
+            # Fit each value to the width actually available to it — the gap to
+            # the NEXT column's x-position, less the gutter — rather than a
+            # hand-tuned character count, so a long bold client name can never
+            # render into WORK TITLE (see module docstring / task 5b).
+            date_str = _short_date(r["completed_at"])
+            date_left = _DONE_COLS["date"] - _text_width(date_str, 10, "bold")
+            doc.text(_DONE_COLS["client"],
+                     _fit(r["client"], _DONE_COLS["title"] - _DONE_COLS["client"] - _COL_GUTTER,
+                          size=10, weight="bold"),
+                     size=10, weight="bold", y=cy, va="center")
+            doc.text(_DONE_COLS["title"],
+                     _fit(r.get("title", ""), _DONE_COLS["type"] - _DONE_COLS["title"] - _COL_GUTTER,
+                          size=10),
+                     size=10, color=MUTED, y=cy, va="center")
+            doc.text(_DONE_COLS["type"],
+                     _fit(r["return_type"], _DONE_COLS["emp"] - _DONE_COLS["type"] - _COL_GUTTER,
+                          size=10),
+                     size=10, color=MUTED, y=cy, va="center")
+            doc.text(_DONE_COLS["emp"],
+                     _fit(r["assignee"], _DONE_COLS["outcome"] - _DONE_COLS["emp"] - _COL_GUTTER,
+                          size=10),
+                     size=10, color=MUTED, y=cy, va="center")
+            # OUTCOME grows toward DATE, which is itself right-aligned and grows
+            # LEFTWARD from RIGHT — fit against DATE's actual left edge, not RIGHT,
+            # or a long date-adjacent value could still collide with the date text.
+            doc.text(_DONE_COLS["outcome"],
+                     _fit("Handoff" if handoff else "Completed",
+                          date_left - _DONE_COLS["outcome"] - _COL_GUTTER, size=9.5),
                      size=9.5, color=(MUTED if handoff else GREEN_INK), y=cy, va="center")
-            doc.text(_DONE_COLS["date"], _short_date(r["completed_at"]), size=10,
+            doc.text(_DONE_COLS["date"], date_str, size=10,
                      weight="bold", color=(MUTED if handoff else GREEN_INK),
                      ha="right", y=cy, va="center")
             doc.advance(LINE)
