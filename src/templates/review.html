@@ -46,7 +46,7 @@
           <th>Client</th>
           <th>Return type</th>
           <th>Employee</th>
-          <th>Completed</th>
+          <th>Outcome</th>
         </tr>
       </thead>
       <tbody>
@@ -55,7 +55,19 @@
           <td style="font-weight:600">{{ r.client }}</td>
           <td class="text-muted">{{ r.return_type }}</td>
           <td class="text-muted">{{ r.assignee }}</td>
-          <td style="font-weight:700;color:var(--ok)">{{ r.completed_at }}</td>
+          {# A handoff is NOT a finished return -- Karbon moved the work to
+             somebody else, so it is credited to the person who had it but
+             labelled so nobody reads it as the client's work being done. #}
+          <td>
+            {% if r.kind == 'handoff' %}
+              <span style="font-weight:700">{{ r.completed_at }}</span>
+              <span class="text-muted" style="font-weight:400;font-size:12px;display:block">
+                handoff → {{ r.handed_to }}
+              </span>
+            {% else %}
+              <span style="font-weight:700;color:var(--ok)">{{ r.completed_at }}</span>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

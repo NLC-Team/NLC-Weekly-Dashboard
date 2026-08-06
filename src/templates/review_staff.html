@@ -24,7 +24,9 @@
 <div class="kpi-row kpi-3">
   <div class="kpi-card">
     <div class="kpi-value" style="color:var(--green-ink)">{{ staff.completed_week }}</div>
-    <div class="kpi-label">Completed this week</div>
+    <div class="kpi-label">Completed this week{% if staff.handoff_week %}
+      <span class="text-muted" style="font-weight:400">· {{ staff.handoff_week }} handed off</span>
+      {% endif %}</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-value text-accent">{{ staff.open }}</div>

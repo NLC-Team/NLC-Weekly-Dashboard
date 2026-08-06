@@ -153,3 +153,29 @@ def test_render_pdf_staff_page_recent_overdue_projects():
     pdf_bytes = review_pdf.render_pdf(rv)
     assert pdf_bytes[:4] == b"%PDF"
     assert len(pdf_bytes) > 500
+
+
+def test_pdf_marks_a_handoff_row_in_its_own_column():
+    """The done table gained an OUTCOME column so a handoff cannot be misread
+    as a finished return, and a handoff row still renders."""
+    assert "outcome" in review_pdf._DONE_COLS
+
+    rv = {
+        "firm_name": "NLC Financial",
+        "generated_at": datetime(2026, 6, 29, 7, 0),
+        "week_start": "2026-06-23",
+        "top_n": 10,
+        "total_overdue": 0,
+        "completed_this_week": [
+            {"client": "Acme", "title": "1040 Return", "return_type": "Tax: 1040",
+             "assignee": "Alice", "completed_at": "2026-06-29",
+             "kind": "handoff", "handed_to": "Bob"},
+            {"client": "Beta", "title": "1120 Return", "return_type": "Tax: 1120",
+             "assignee": "Carol", "completed_at": "2026-06-28",
+             "kind": "completed", "handed_to": None},
+        ],
+        "top": [], "recent": [], "per_staff": [], "staff_rows": [],
+        "staff_pages": [],
+    }
+    pdf = review_pdf.render_pdf(rv)
+    assert pdf[:4] == b"%PDF"

@@ -412,12 +412,17 @@ def _type_bars(doc: _Doc, types: list, budget: float = TYPE_MAX_H):
 
 _DONE_CAP = 30   # matches the on-screen "Completed this week" cap (review.html)
 
+# Six columns. OUTCOME separates a real completion from a HANDOFF (Karbon moved
+# the work to somebody else), which must never read as a finished return. The
+# employee/type truncations below are sized to these gaps -- widen a column and
+# the neighbouring text will overlap it.
 _DONE_COLS = {
-    "client": LEFT + 0.01,
-    "title":  0.28,
-    "type":   0.50,
-    "emp":    0.70,
-    "date":   RIGHT,
+    "client":  LEFT + 0.01,
+    "title":   0.26,
+    "type":    0.46,
+    "emp":     0.64,
+    "outcome": 0.80,
+    "date":    RIGHT,
 }
 
 
@@ -446,7 +451,8 @@ def _summary_page(doc: _Doc, rv: dict):
         doc.text(_DONE_COLS["title"], "WORK TITLE", size=8.5, weight="bold", color=MUTED)
         doc.text(_DONE_COLS["type"], "RETURN TYPE", size=8.5, weight="bold", color=MUTED)
         doc.text(_DONE_COLS["emp"], "EMPLOYEE", size=8.5, weight="bold", color=MUTED)
-        doc.text(_DONE_COLS["date"], "COMPLETED", size=8.5, weight="bold", color=MUTED, ha="right")
+        doc.text(_DONE_COLS["outcome"], "OUTCOME", size=8.5, weight="bold", color=MUTED)
+        doc.text(_DONE_COLS["date"], "DATE", size=8.5, weight="bold", color=MUTED, ha="right")
         doc.advance(LINE * 0.85)
         doc.rule(color=GREEN, width=1.2)
         doc.advance(GAP)
@@ -456,12 +462,16 @@ def _summary_page(doc: _Doc, rv: dict):
             if i % 2 == 1:
                 doc.band(LINE)
             cy = base + LINE * 0.5      # center the row text within its band
-            doc.text(_DONE_COLS["client"], _truncate(r["client"], 28), size=10, weight="bold", y=cy, va="center")
-            doc.text(_DONE_COLS["title"], _truncate(r.get("title", ""), 26), size=10, color=MUTED, y=cy, va="center")
-            doc.text(_DONE_COLS["type"], _truncate(r["return_type"], 24), size=10, color=MUTED, y=cy, va="center")
-            doc.text(_DONE_COLS["emp"], _truncate(r["assignee"], 24), size=10, color=MUTED, y=cy, va="center")
+            handoff = r.get("kind") == "handoff"
+            doc.text(_DONE_COLS["client"], _truncate(r["client"], 24), size=10, weight="bold", y=cy, va="center")
+            doc.text(_DONE_COLS["title"], _truncate(r.get("title", ""), 24), size=10, color=MUTED, y=cy, va="center")
+            doc.text(_DONE_COLS["type"], _truncate(r["return_type"], 20), size=10, color=MUTED, y=cy, va="center")
+            doc.text(_DONE_COLS["emp"], _truncate(r["assignee"], 18), size=10, color=MUTED, y=cy, va="center")
+            doc.text(_DONE_COLS["outcome"], "Handoff" if handoff else "Completed",
+                     size=9.5, color=(MUTED if handoff else GREEN_INK), y=cy, va="center")
             doc.text(_DONE_COLS["date"], _short_date(r["completed_at"]), size=10,
-                     weight="bold", color=GREEN_INK, ha="right", y=cy, va="center")
+                     weight="bold", color=(MUTED if handoff else GREEN_INK),
+                     ha="right", y=cy, va="center")
             doc.advance(LINE)
         if total > _DONE_CAP:
             doc.advance(GAP)
@@ -557,8 +567,13 @@ def _staff_page(doc: _Doc, sp: dict):
     doc.advance(0.030)
 
     # Headline tiles
+    # The tile label carries the handoff split rather than a second line: the
+    # tile box is a fixed height and a sub-line would not fit.
+    _handed = sp.get("handoff_week", 0)
+    _done_label = (f"COMPLETED ({_handed} HANDED OFF)" if _handed
+                   else "COMPLETED THIS WEEK")
     _tiles(doc, [
-        (sp["completed_week"], "COMPLETED THIS WEEK", GREEN_INK, False),
+        (sp["completed_week"], _done_label, GREEN_INK, False),
         (sp["open"], "OPEN PROJECTS", NAVY, False),
         (sp["overdue"], "OVERDUE RETURNS", (DANGER if sp["overdue"] else INK), bool(sp["overdue"])),
     ])
