@@ -22,12 +22,17 @@
 <!-- Step 3: result -->
 <div class="card">
   <div class="card-title text-ok">&#10003; Import complete</div>
-  <div style="display:grid;grid-template-columns:repeat(5,auto);gap:24px;margin-bottom:16px">
+  <div style="display:grid;grid-template-columns:repeat(6,auto);gap:24px;margin-bottom:16px">
     <div><div class="kpi-value text-accent" style="font-size:24px">{{ result.imported if result.imported is defined else result.rows }}</div><div class="kpi-label">Rows imported</div></div>
     <div><div class="kpi-value text-ok" style="font-size:24px">{{ result.new }}</div><div class="kpi-label">New items added</div></div>
     <div><div class="kpi-value" style="font-size:24px;color:var(--muted)">{{ result.updated }}</div><div class="kpi-label">Existing updated</div></div>
     <div><div class="kpi-value text-ok" style="font-size:24px">{{ result.auto_completed or 0 }}</div><div class="kpi-label">Marked completed</div></div>
     <div><div class="kpi-value" style="font-size:24px;color:var(--muted)">{{ result.reopened or 0 }}</div><div class="kpi-label">Reopened</div></div>
+    <!-- Karbon reassigned these documents; the previous assignee is credited
+         in the Weekly Review and the row is off their plate everywhere else
+         (see store.detect_handoffs). Shown here so an import never silently
+         closes work with no on-screen explanation. -->
+    <div><div class="kpi-value" style="font-size:24px;color:var(--muted)">{{ result.handoffs or 0 }}</div><div class="kpi-label">Reassigned</div></div>
   </div>
   <a href="{{ url_for('overview') }}" class="btn btn-primary">Go to Overview</a>
 </div>

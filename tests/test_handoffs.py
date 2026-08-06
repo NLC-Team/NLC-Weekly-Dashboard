@@ -194,6 +194,41 @@ def test_handed_off_item_leaves_the_open_and_overdue_counts(tmp_path):
         s.close()
 
 
+def test_work_handed_back_to_a_previous_assignee_reopens_it(tmp_path):
+    """Alice -> Bob -> Alice. The SAME item_key (hash of client|title|Alice)
+    is reused for the third row, so without cleanup its OLD handoff record
+    (from the first move) would keep marking it handed_off/closed forever
+    even though Alice is now actively working it again."""
+    from data import service
+
+    s = Store(tmp_path / "h.db")
+    try:
+        DAY3 = DAY2 + timedelta(days=1)
+        s.upsert_items([_rec("k_a", "Acme", "1040 Return", "Alice")], DAY1)
+        s.detect_handoffs(DAY1)
+        s.upsert_items([_rec("k_b", "Acme", "1040 Return", "Bob")], DAY2)
+        s.detect_handoffs(DAY2)
+        assert "k_a" in s.get_handoffs()          # Alice's old row: handed off
+
+        # Work comes back to Alice -- the key hash is identical, so this is
+        # an UPDATE of the existing k_a row, not a new insert.
+        s.upsert_items([_rec("k_a", "Acme", "1040 Return", "Alice")], DAY3)
+        s.detect_handoffs(DAY3)
+
+        handoffs = s.get_handoffs()
+        assert "k_a" not in handoffs               # cleared: Alice holds it live again
+        assert handoffs["k_b"]["from_assignee"] == "Bob"   # Bob's own stint still credited
+        assert handoffs["k_b"]["to_assignee"] == "Alice"
+
+        data = service.dashboard_data(s, DAY3, overdue_days=14)
+        by_key = {it["item_key"]: it for it in data["items"]}
+        assert by_key["k_a"]["handed_off"] is False
+        assert by_key["k_a"]["closed"] is False      # visible and open again
+        assert data["totals"]["total_pending"] == 1  # Alice's live document counts
+    finally:
+        s.close()
+
+
 def test_handoff_does_not_change_the_per_client_completed_count(tmp_path):
     # The firm-wide completed figure is ONE per client and must not move.
     from data import service

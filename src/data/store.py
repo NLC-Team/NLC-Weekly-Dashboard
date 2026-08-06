@@ -571,7 +571,7 @@ class Store:
 
         Returns (item_key, from_assignee, to_assignee, last_seen) per orphan.
         A row qualifies when ALL of:
-          - it was NOT in this import (last_seen < iso), and
+          - it was NOT in this import (last_seen != iso), and
           - a row with the same (client, title) WAS in this import under a
             DIFFERENT assignee -- somebody took the work over, and
           - it isn't already finished: a genuinely completed row (or a
@@ -603,6 +603,12 @@ class Store:
             for r in rs:
                 if r["last_seen"] == iso or r["item_key"] in known:
                     continue
+                # Comparing .strip() here (not .strip().lower(), unlike the
+                # (client, title) grouping key above) is safe: importer._make_key
+                # hashes client|title|assignee ALL lower-cased, so two active rows
+                # in this group already differ in lower(assignee) -- a name
+                # differing only in case would collide on one item_key and never
+                # reach this method as two separate rows.
                 if (r["assignee"] or "").strip() in fresh_names:
                     continue
                 status = r["last_status"]
@@ -629,12 +635,28 @@ class Store:
         Called from service.import_csv AFTER upsert_items (the replacement row
         has to exist) and BEFORE apply_import_completion, whose behaviour is
         deliberately unchanged by this. Returns how many were newly recorded.
+
+        SELF-HEALING: item_key hashes client|title|assignee, so when work that
+        was handed away later comes BACK to a previous assignee -- a routine
+        preparer<->reviewer round trip -- upsert_items regenerates that exact
+        same key and simply updates it live again. Without this cleanup, that
+        row's OLD handoffs entry would keep marking it handed_off/closed
+        forever, silently vanishing live work from every view. Clearing any
+        handoff whose item_key is live in THIS import undoes that -- and only
+        that; a row still stale keeps its handoff record untouched.
         """
         iso = import_date.isoformat()
         with self._write_lock:
+            self.conn.execute(
+                "DELETE FROM handoffs WHERE item_key IN "
+                "(SELECT item_key FROM items WHERE resolved=0 AND last_seen=?)",
+                (iso,),
+            )
             payload = [(k, frm, to, iso)
                        for k, frm, to, _last_seen in self._handoff_candidates(iso)]
-            return self._write_handoffs(payload)
+            n = self._write_handoffs(payload)
+            self._bump()
+            return n
 
     def backfill_handoffs(self) -> int:
         """Record the handoffs that happened BEFORE detection existed. Runs once.
