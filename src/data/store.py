@@ -27,6 +27,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import config
+from data import analytics
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (
@@ -74,6 +75,17 @@ CREATE TABLE IF NOT EXISTS project_state (
     return_type  TEXT,
     completed    INTEGER DEFAULT 0,
     completed_at TEXT
+);
+-- Reassignment history. An item_key hashes client|title|assignee, so Karbon
+-- moving a document to a new person inserts a NEW row and leaves the old one
+-- active forever. One row here per ORPHANED item_key: the previous assignee
+-- gets the credit, the row stops counting as their open work. Keyed on the
+-- stale item_key, so detection can be re-run safely -- a row is handed off once.
+CREATE TABLE IF NOT EXISTS handoffs (
+    item_key      TEXT PRIMARY KEY,
+    from_assignee TEXT,
+    to_assignee   TEXT,
+    handed_at     TEXT
 );
 -- Staff directory + login accounts: names, access roles, and credentials.
 -- username is the unique login handle; password_hash is a Werkzeug hash;
@@ -552,6 +564,86 @@ class Store:
             self.conn.commit()
             self._bump()
             return {"completed": completed_n, "reopened": reopened_n}
+
+    # ---- reassignment (handoff) history ---------------------------------
+    def _handoff_candidates(self, iso: str) -> list[tuple]:
+        """Stale rows a reassignment left behind, judged against the import `iso`.
+
+        Returns (item_key, from_assignee, to_assignee, last_seen) per orphan.
+        A row qualifies when ALL of:
+          - it was NOT in this import (last_seen < iso), and
+          - a row with the same (client, title) WAS in this import under a
+            DIFFERENT assignee -- somebody took the work over, and
+          - it isn't already finished: a genuinely completed row (or a
+            "Completed - <word>" close-out) that later drops out of the export
+            keeps its own completion and is never re-credited as a handoff.
+        Rows already recorded as handoffs are skipped, so callers can re-run.
+        """
+        known = {r["item_key"] for r in self.conn.execute(
+            "SELECT item_key FROM handoffs")}
+        rows = self.conn.execute(
+            "SELECT item_key, assignee, client, title, last_status, last_seen "
+            "FROM items WHERE resolved=0"
+        ).fetchall()
+
+        groups: dict[tuple, list] = {}
+        for r in rows:
+            key = ((r["client"] or "").strip().lower(),
+                   (r["title"] or "").strip().lower())
+            groups.setdefault(key, []).append(r)
+
+        out: list[tuple] = []
+        for rs in groups.values():
+            fresh = [r for r in rs if r["last_seen"] == iso]
+            if not fresh:
+                continue
+            fresh_names = {(r["assignee"] or "").strip() for r in fresh}
+            # Every new holder, comma-joined -- one live case has two.
+            to = ", ".join(sorted(fresh_names))
+            for r in rs:
+                if r["last_seen"] == iso or r["item_key"] in known:
+                    continue
+                if (r["assignee"] or "").strip() in fresh_names:
+                    continue
+                status = r["last_status"]
+                if analytics.status_is_done(status) or \
+                        analytics.status_is_closed_other(status):
+                    continue
+                out.append((r["item_key"], r["assignee"], to, r["last_seen"]))
+        return out
+
+    def _write_handoffs(self, payload: list[tuple]) -> int:
+        """Insert (item_key, from, to, handed_at) rows. Returns how many."""
+        if not payload:
+            return 0
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO handoffs(item_key, from_assignee, "
+            "to_assignee, handed_at) VALUES(?, ?, ?, ?)", payload)
+        self.conn.commit()
+        self._bump()
+        return len(payload)
+
+    def detect_handoffs(self, import_date: date) -> int:
+        """Record every handoff this import revealed, dated the import day.
+
+        Called from service.import_csv AFTER upsert_items (the replacement row
+        has to exist) and BEFORE apply_import_completion, whose behaviour is
+        deliberately unchanged by this. Returns how many were newly recorded.
+        """
+        iso = import_date.isoformat()
+        with self._write_lock:
+            payload = [(k, frm, to, iso)
+                       for k, frm, to, _last_seen in self._handoff_candidates(iso)]
+            return self._write_handoffs(payload)
+
+    def get_handoffs(self) -> dict:
+        """item_key -> {from_assignee, to_assignee, handed_at} for every handoff."""
+        rows = self.conn.execute(
+            "SELECT item_key, from_assignee, to_assignee, handed_at FROM handoffs"
+        ).fetchall()
+        return {r["item_key"]: {"from_assignee": r["from_assignee"],
+                                "to_assignee": r["to_assignee"],
+                                "handed_at": r["handed_at"]} for r in rows}
 
     # ---- staff directory + login accounts ------------------------------
     def get_staff(self) -> list[dict]:
