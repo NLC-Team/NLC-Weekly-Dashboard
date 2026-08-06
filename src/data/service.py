@@ -64,6 +64,7 @@ def dashboard_data(store: Store, today: date, overdue_days: int) -> dict:
     items = analytics.enrich_items(active, today, overdue_days)
     doc_states = store.get_doc_states()
     project_states = store.get_project_states()
+    handoffs = store.get_handoffs()
     # Classify every document by how "finished" it is:
     #   completed    -> exactly "Completed" (analytics.status_is_done), OR received
     #                   from the client, OR its return is manually completed, OR
@@ -77,6 +78,9 @@ def dashboard_data(store: Store, today: date, overdue_days: int) -> dict:
     #                   all-closed-other client gets auto-completed on every import;
     #                   only a MANUAL "Complete" click (a human decision) should
     #                   promote such a document into a real completion.
+    #   handed_off   -> Karbon reassigned the work; this row is the previous
+    #                   assignee's orphan (store.detect_handoffs). Closed, but
+    #                   never counted as a completion.
     # Both completed and closed_other are "closed": folded out of the overdue flag
     # AND out of the open-work aggregates below, so neither nags on the Overdue tab
     # or in any count. Only genuinely-open work remains. The full `items` list is
@@ -95,7 +99,18 @@ def dashboard_data(store: Store, today: date, overdue_days: int) -> dict:
             or (pkey in completed_projects and not own_closed_other)
         )
         it["closed_other"] = own_closed_other and not it["completed"]
-        it["closed"] = it["completed"] or it["closed_other"]
+        # A HANDED-OFF row: Karbon moved this work to somebody else, stranding
+        # this row under its previous assignee (see store.detect_handoffs). It is
+        # closed -- it leaves every open/overdue aggregate, so the document isn't
+        # counted against two people at once -- but deliberately NOT `completed`,
+        # because the client's work is still in progress with the new assignee
+        # and the per-client completed figure must not move. The Weekly Review is
+        # the only place it earns credit, as that person's finished share.
+        h = handoffs.get(it["item_key"])
+        it["handed_off"] = bool(h) and not it["completed"] and not it["closed_other"]
+        it["handed_to"] = h["to_assignee"] if it["handed_off"] else None
+        it["handed_at"] = h["handed_at"] if it["handed_off"] else None
+        it["closed"] = it["completed"] or it["closed_other"] or it["handed_off"]
         if it["closed"]:
             it["overdue"] = False
             it["days_overdue"] = 0

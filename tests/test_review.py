@@ -16,9 +16,9 @@ def _item(key, client, title, days, assignee="Sarah", rtype_raw="1040 Individual
     }
 
 
-def _data(items, doc_states=None, project_states=None, overdue_days=14):
+def _data(items, doc_states=None, project_states=None, overdue_days=14, handoffs=None):
     """Mirror service.dashboard_data: enrich, classify each document as
-    completed/closed_other, fold closed work out of overdue, set each item's
+    completed/closed_other/handed_off, fold closed work out of overdue, set each item's
     effective return_type, and expose data['items'] + data['overdue'].
 
     data['items'] is the FULL row list (closed ones included) — the Weekly
@@ -26,6 +26,7 @@ def _data(items, doc_states=None, project_states=None, overdue_days=14):
     """
     doc_states = doc_states or {}
     project_states = project_states or {}
+    handoffs = handoffs or {}
     enriched = analytics.enrich_items(items, TODAY, overdue_days)
     completed = {k for k, v in project_states.items() if v.get("completed")}
     manual = {k for k, v in project_states.items()
@@ -41,7 +42,11 @@ def _data(items, doc_states=None, project_states=None, overdue_days=14):
             or (pkey in completed and not own_closed_other)
         )
         it["closed_other"] = own_closed_other and not it["completed"]
-        it["closed"] = it["completed"] or it["closed_other"]
+        h = handoffs.get(it["item_key"])
+        it["handed_off"] = bool(h) and not it["completed"] and not it["closed_other"]
+        it["handed_to"] = h["to_assignee"] if it["handed_off"] else None
+        it["handed_at"] = h["handed_at"] if it["handed_off"] else None
+        it["closed"] = it["completed"] or it["closed_other"] or it["handed_off"]
         if it["closed"]:
             it["overdue"] = False
             it["days_overdue"] = 0

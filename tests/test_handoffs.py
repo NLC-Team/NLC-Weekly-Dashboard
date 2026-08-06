@@ -141,3 +141,70 @@ def test_import_csv_detects_handoffs_and_reports_the_count(tmp_path):
         assert [h["from_assignee"] for h in s.get_handoffs().values()] == ["Alice"]
     finally:
         s.close()
+
+
+def test_handed_off_item_is_closed_but_not_completed(tmp_path):
+    from data import service
+
+    s = Store(tmp_path / "h.db")
+    try:
+        s.upsert_items([_rec("k_a", "Acme", "1040 Return", "Alice")], DAY1)
+        s.upsert_items([_rec("k_b", "Acme", "1040 Return", "Bob")], DAY2)
+        s.detect_handoffs(DAY2)
+
+        data = service.dashboard_data(s, DAY2, overdue_days=14)
+        by_key = {it["item_key"]: it for it in data["items"]}
+
+        stale = by_key["k_a"]
+        assert stale["handed_off"] is True
+        assert stale["handed_to"] == "Bob"
+        assert stale["handed_at"] == "2026-06-30"
+        assert stale["closed"] is True          # off Alice's plate
+        assert stale["completed"] is False      # but NOT a completed return
+        assert stale["closed_other"] is False
+
+        live = by_key["k_b"]
+        assert live["handed_off"] is False
+        assert live["closed"] is False
+    finally:
+        s.close()
+
+
+def test_handed_off_item_leaves_the_open_and_overdue_counts(tmp_path):
+    from data import service
+
+    s = Store(tmp_path / "h.db")
+    try:
+        # source_date is DAY1 - 30, so both rows are well past the 14-day rule.
+        old = {"source_date": DAY1 - timedelta(days=30)}
+        s.upsert_items([{**_rec("k_a", "Acme", "1040 Return", "Alice"), **old}], DAY1)
+        s.upsert_items([{**_rec("k_b", "Acme", "1040 Return", "Bob"), **old}], DAY2)
+
+        before = service.dashboard_data(s, DAY2, overdue_days=14)
+        assert before["totals"]["total_pending"] == 2      # double-counted today
+        assert {r["assignee"] for r in before["per_assignee"]} == {"Alice", "Bob"}
+
+        s.detect_handoffs(DAY2)
+        after = service.dashboard_data(s, DAY2, overdue_days=14)
+        assert after["totals"]["total_pending"] == 1       # counted once now
+        assert after["totals"]["total_overdue"] == 1
+        assert {it["item_key"] for it in after["overdue"]} == {"k_b"}
+        assert {r["assignee"] for r in after["per_assignee"]} == {"Bob"}
+    finally:
+        s.close()
+
+
+def test_handoff_does_not_change_the_per_client_completed_count(tmp_path):
+    # The firm-wide completed figure is ONE per client and must not move.
+    from data import service
+
+    s = Store(tmp_path / "h.db")
+    try:
+        s.upsert_items([_rec("k_a", "Acme", "1040 Return", "Alice")], DAY1)
+        s.upsert_items([_rec("k_b", "Acme", "1040 Return", "Bob")], DAY2)
+        s.detect_handoffs(DAY2)
+
+        data = service.dashboard_data(s, DAY2, overdue_days=14)
+        assert data["project_totals"]["completed_total"] == 0
+    finally:
+        s.close()
