@@ -9,3 +9,6 @@ __pycache__/
 # PyInstaller working dir (the built exe in dist/ is kept intentionally)
 build/
 *.spec.bak
+
+# Isolated worktrees for subagent-driven plan execution
+.worktrees/
