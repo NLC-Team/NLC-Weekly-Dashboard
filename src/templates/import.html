@@ -40,26 +40,38 @@
   <div class="msg msg-err" style="margin-bottom:14px">{{ run_error }}</div>
   {% endif %}
   <p class="text-muted mb-2" style="font-size:12px">
-    {{ ctx.row_count }} rows detected. Match each dashboard field to a column in your CSV.
-    Required fields are marked <span style="color:var(--danger)">*</span>.
-    Column guesses are pre-filled — adjust if anything looks wrong.
+    {{ ctx.row_count }} rows and {{ ctx.columns|length }} columns detected. The dashboard
+    reads a fixed set of {{ ctx.guesses|length }} Karbon columns — every other column in
+    the file is ignored. Nothing to choose here.
   </p>
 
   <form method="post" action="{{ url_for('import_run') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="map-grid mb-2">
       {% for field, label, required in logical_fields %}
+      {% if ctx.guesses.get(field) %}
       <div style="font-size:12px;font-weight:{{ '700' if required else '400' }}">
         {{ label }}{% if required %}<span class="req">*</span>{% endif %}
       </div>
-      <select name="map_{{ field }}">
-        <option value="">— not mapped —</option>
-        {% for col in ctx.columns %}
-        <option value="{{ col }}" {{ 'selected' if ctx.guesses.get(field) == col }}>{{ col }}</option>
-        {% endfor %}
-      </select>
+      <div style="font-size:12px;font-family:var(--mono, monospace)">{{ ctx.guesses.get(field) }}</div>
+      {% endif %}
       {% endfor %}
     </div>
+
+    {% if ctx.missing_columns %}
+    <div class="msg msg-err" style="margin-bottom:14px;font-size:12px">
+      <strong>Not found in this file:</strong>
+      {{ ctx.missing_columns|join(', ') }}.
+      The import will still run using the columns above, but anything driven by the
+      missing ones will be blank — check your numbers afterwards.
+    </div>
+    {% endif %}
+
+    {% if ctx.ignored_columns %}
+    <p class="text-muted mb-2" style="font-size:11px">
+      Ignored ({{ ctx.ignored_columns|length }}): {{ ctx.ignored_columns|join(', ') }}
+    </p>
+    {% endif %}
 
     {% if ctx.all_statuses %}
     <div style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px">

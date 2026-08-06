@@ -63,8 +63,66 @@ def header_signature(columns: list[str]) -> str:
     return hashlib.sha1(joined.encode("utf-8")).hexdigest()
 
 
+# --- The fixed set of columns an import reads -------------------------------
+# User directive 2026-08-06: the dashboard reads ONLY these nine Karbon columns.
+# Every other column in an export is ignored, whatever it is named, and the
+# mapping is no longer inferred from the file or taken from the wizard form --
+# canonical_mapping() below is what actually runs.
+#
+# `item_id` and `project` are absent ON PURPOSE, not by omission:
+#   * item_id -- the "All Work" export has no per-work ID, so keys are a hash of
+#     client+title+assignee. The richer export's ID-ish columns are traps: "Client
+#     ID" is per CLIENT, so mapping it would collapse all of a client's documents
+#     onto one key, and switching keys on an existing database would orphan every
+#     row already stored. Leaving it unmapped keeps keys stable.
+#   * project -- never present in these exports; build_projects falls back to
+#     grouping by client, which is the documented behaviour the views expect.
+# Adding either is a deliberate migration, not a mapping tweak.
+CANONICAL_COLUMNS = {
+    "assignee": "Assignee",
+    "client": "Client Name",
+    "client_owner": "Client Owner",
+    "title": "Work Title",
+    "status": "Status",
+    "date": "Start Date",
+    "due_date": "Due Date",
+    "completed_date": "Completed Date UTC",
+    "return_type": "Work Type",
+}
+
+
+def canonical_mapping(columns: list[str]) -> dict:
+    """Map logical field -> source column, using only CANONICAL_COLUMNS.
+
+    A field is mapped only when its column is actually present, so a future
+    export that drops or renames one carries on with the remaining eight rather
+    than failing (user directive: "rely on the other 8 columns if a column gets
+    dropped"). Matching ignores case and surrounding whitespace, but the value
+    returned is the column name AS IT APPEARS in the file so the dataframe
+    lookup in apply_mapping still resolves it.
+
+    Note what silent degradation costs, since it is the deliberate trade-off
+    here: if "Due Date" were renamed, every due date would import blank and
+    overdue would quietly fall back to the age rule. The import result screen
+    reports which of the nine were found so this is visible after a run.
+    """
+    by_norm = {}
+    for col in columns:
+        by_norm.setdefault(str(col).strip().lower(), col)
+    mapping = {}
+    for field, wanted in CANONICAL_COLUMNS.items():
+        col = by_norm.get(wanted.strip().lower())
+        if col is not None:
+            mapping[field] = col
+    return mapping
+
+
 def guess_mapping(columns: list[str]) -> dict:
-    """Best-effort initial mapping of logical field -> source column name."""
+    """Best-effort initial mapping of logical field -> source column name.
+
+    Retained for the legacy desktop UI (src/ui/import_view.py) and as the hint
+    table's home. The WEB import no longer uses it -- see canonical_mapping.
+    """
     mapping: dict[str, str] = {}
     used: set[str] = set()
     lowered = {c: c.lower() for c in columns}

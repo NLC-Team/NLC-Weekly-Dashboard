@@ -1789,17 +1789,16 @@ def import_upload():
                                upload_error=f"Could not read file: {e}")
 
     columns = list(df.columns)
-    # Pre-fill the mapping for this layout. Start from a fresh guess (which knows
-    # every current logical field, including ones added after this file was last
-    # imported, e.g. "Client owner"), then overlay any saved mapping so the user's
-    # previous choices win. This way a saved mapping that predates a new field
-    # still gets that field auto-guessed instead of silently left unmapped.
+    # The mapping is FIXED (importer.CANONICAL_COLUMNS), not guessed and not
+    # remembered per file layout: only those nine Karbon columns are read and
+    # every other column is ignored, however many the file has. A column that is
+    # missing simply goes unmapped and the rest still import. The old
+    # guess+saved-mapping overlay is gone -- on an unfamiliar export it could
+    # mis-map (e.g. "Client ID" as the work ID, or "Client Manager" as the client
+    # owner, which silently changes the Weekly Review's owner scope).
     sig = importer.header_signature(columns)
-    saved = get_store().get_mapping(sig)
-    guesses = importer.guess_mapping(columns)
-    if saved:
-        guesses = {**guesses, **saved}
-    records = importer.apply_mapping(df, guesses)
+    mapping = importer.canonical_mapping(columns)
+    records = importer.apply_mapping(df, mapping)
     all_statuses = importer.distinct_statuses(records)
 
     session["import_step"] = 1
@@ -1807,7 +1806,13 @@ def import_upload():
         "tmp_path": str(tmp_path),
         "filename": f.filename,
         "columns": columns,
-        "guesses": guesses,
+        # `guesses` keeps its name because the mapping step's template reads it;
+        # it is now the canonical mapping, shown read-only.
+        "guesses": mapping,
+        "missing_columns": [importer.CANONICAL_COLUMNS[f]
+                            for f in importer.CANONICAL_COLUMNS
+                            if f not in mapping],
+        "ignored_columns": [c for c in columns if c not in set(mapping.values())],
         "all_statuses": all_statuses,
         "row_count": len(df),
         "sig": sig,
@@ -1832,11 +1837,11 @@ def import_run():
                                             "(the server may have restarted). Please "
                                             "upload the file again.")
 
-    mapping = {}
-    for field, _label, _req in config.LOGICAL_FIELDS:
-        col = request.form.get(f"map_{field}", "").strip()
-        if col:
-            mapping[field] = col
+    # The mapping is hard-coded, so the posted form no longer decides what is
+    # read -- it is rebuilt from the file's own header against
+    # importer.CANONICAL_COLUMNS. Derived here rather than trusted from the
+    # session so a stale/tampered ctx cannot widen what gets imported.
+    mapping = importer.canonical_mapping(ctx.get("columns") or [])
 
     # No status filtering on import (every row is stored). We only remember which
     # statuses mean "completed" so finished returns land in the Done tab.
