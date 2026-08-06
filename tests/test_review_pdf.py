@@ -231,3 +231,46 @@ def test_done_table_columns_never_overlap_for_long_values():
         drawn = review_pdf._fit(value, avail, size=size, weight=weight)
         assert review_pdf._text_width(drawn, size, weight) <= avail, \
             f"{value!r} overflows its column"
+
+
+def test_text_width_matches_real_rendered_extent():
+    """Regression guard for the conversion itself: the three tests above only
+    check that `_text_width(fitted) <= avail`, which is true by construction of
+    `_fit`'s own loop and cannot catch the conversion under-reporting width (the
+    exact defect a review found: TextPath-based measurement underestimated some
+    strings by over 1%, letting a "fitted" cell's real ink land past its column
+    with only the gutter hiding it).
+
+    Build an independent ground-truth figure — same figsize/axes-rect/xlim/ylim
+    as `_Doc._new_page`, so transFigure and font resolution agree with the real
+    pages — render the string for real, and take its true window-extent width
+    in page fractions. `_text_width` must never report LESS than that (an
+    underestimate is unsafe), and, so a wildly over-conservative measure would
+    also fail this test, not more than a tight tolerance above it."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    s, size, weight = "2025 Business Tax Return and Extension", 10, "normal"
+
+    fig = Figure(figsize=(review_pdf.PAGE_W, review_pdf.PAGE_H))
+    FigureCanvasAgg(fig)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    t = ax.text(0, 0, s, fontsize=size, fontweight=weight)
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    real_width = t.get_window_extent(renderer=renderer) \
+        .transformed(fig.transFigure.inverted()).width
+
+    measured = review_pdf._text_width(s, size, weight)
+
+    assert measured >= real_width - 1e-9, (
+        f"_text_width underestimates real width: measured={measured!r} "
+        f"real={real_width!r}"
+    )
+    assert measured <= real_width + 1e-6, (
+        f"_text_width is more than the stated tolerance above the real width: "
+        f"measured={measured!r} real={real_width!r}"
+    )

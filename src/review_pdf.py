@@ -25,11 +25,10 @@ import io
 import matplotlib
 matplotlib.use("Agg")
 matplotlib.rcParams["font.family"] = ["Times New Roman", "serif"]
+from matplotlib.backends.backend_agg import FigureCanvasAgg  # noqa: E402
 from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
-from matplotlib.font_manager import FontProperties  # noqa: E402
 from matplotlib.patches import Rectangle  # noqa: E402
-from matplotlib.textpath import TextPath  # noqa: E402
 
 # Letterhead palette (shared with the dashboard charts).
 NAVY = "#1a3f8f"
@@ -76,30 +75,66 @@ def _truncate(s: str, n: int) -> str:
 _COL_GUTTER = 0.008
 
 
+# A throwaway measurement surface, built once and reused for every _text_width
+# call. An EARLIER version of this function measured with TextPath instead (no
+# renderer needed), reasoning that TextPath resolves the same font and
+# fallback ax.text uses. That turned out to be only approximately true: a
+# reviewer compared it against real `ax.text(...).get_window_extent()` output
+# and found TextPath UNDERESTIMATES some strings by over 1% (worst observed:
+# "2025 Business Tax Return and Extension" at 10pt normal, measured/real =
+# 0.9877) — enough to let a "fitted" cell's real ink land past the width it
+# was fitted to, relying on _COL_GUTTER to silently absorb the gap. A fitter
+# must never do that.
+#
+# The fix measures through the SAME rendering path `ax.text` uses, instead of
+# approximating it: a second `Figure`/axes, built with the identical
+# figsize/axes-rect/xlim/ylim as `_Doc._new_page` (so transFigure and font
+# resolution match exactly), given its own `FigureCanvasAgg` up front (a bare
+# `Figure()` has no canvas — that's still true, which is why the PAGE figures
+# can't be asked directly while a row is being laid out; this is a dedicated
+# scratch figure that exists ONLY to be asked). `get_window_extent` only needs
+# a renderer to look up font metrics — it does not require a full `canvas.draw()`
+# of the figure — so one renderer, created once, answers every call. Checked
+# empirically against a freshly-drawn ground-truth figure for the same strings
+# TextPath got wrong: the two now agree EXACTLY (diff 0.000000 in every case
+# tried), because it is the identical measurement, not a proxy for it. Worst-
+# case residual error going forward is therefore zero, not a bounded epsilon —
+# _text_width IS what `ax.text` will render, for any string/size/weight.
+_measure_fig = None
+_measure_ax = None
+_measure_renderer = None
+
+
+def _measure_surface():
+    """Lazily build (once) and return the (fig, ax, renderer) measurement
+    surface described above."""
+    global _measure_fig, _measure_ax, _measure_renderer
+    if _measure_ax is None:
+        _measure_fig = Figure(figsize=(PAGE_W, PAGE_H))
+        FigureCanvasAgg(_measure_fig)
+        _measure_ax = _measure_fig.add_axes([0, 0, 1, 1])
+        _measure_ax.set_xlim(0, 1)
+        _measure_ax.set_ylim(0, 1)
+        _measure_ax.axis("off")
+        _measure_renderer = _measure_fig.canvas.get_renderer()
+    return _measure_fig, _measure_ax, _measure_renderer
+
+
 def _text_width(s: str, size: float, weight: str = "normal") -> float:
     """Rendered width of `s`, in the same 0..1 page-fraction units the tables
-    position their columns with.
-
-    Measured with TextPath rather than a canvas renderer: the pages are drawn
-    on bare `Figure` objects that only get a canvas when PdfPages saves them,
-    so there is no renderer to ask while a row is being laid out. TextPath
-    resolves the same font (and the same fallback when Times is absent, which
-    it is on the deployment box) that `ax.text` will use, so the measurement
-    and the drawing agree.
-
-    `_Doc._new_page` puts axes at `add_axes([0, 0, 1, 1])` with xlim/ylim
-    `(0, 1)` — the axes data coordinates ARE figure fractions, one-for-one, so
-    no extra scaling beyond points -> inches -> /PAGE_W is needed. Checked
-    empirically against `ax.text(...).get_window_extent()` on a real rendered
-    Figure (same font, same fallback): the two methods agree to within ~1%,
-    comfortably inside the gutter kept between columns.
+    position their columns with — the EXACT width `ax.text` will produce for
+    the same string/size/weight (see the measurement-surface comment above),
+    not an approximation of it.
     """
     if not s:
         return 0.0
-    fp = FontProperties(family=matplotlib.rcParams["font.family"], weight=weight)
-    path = TextPath((0, 0), str(s), size=size, prop=fp)
-    width_pts = path.get_extents().width
-    return (width_pts / 72.0) / PAGE_W
+    fig, ax, renderer = _measure_surface()
+    t = ax.text(0, 0, str(s), fontsize=size, fontweight=weight)
+    try:
+        bbox = t.get_window_extent(renderer=renderer)
+        return bbox.transformed(fig.transFigure.inverted()).width
+    finally:
+        t.remove()
 
 
 def _fit(s, max_width: float, size: float = 10.0, weight: str = "normal") -> str:
