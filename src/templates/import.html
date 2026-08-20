@@ -50,7 +50,9 @@
     the file is ignored. Nothing to choose here.
   </p>
 
-  <form method="post" action="{{ url_for('import_run') }}">
+  <!-- A full import takes a while; data-busy disables the buttons and relabels
+       the clicked one so nobody double-submits (see base.html's handler). -->
+  <form method="post" action="{{ url_for('import_run') }}" data-busy="Importing…">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div class="map-grid mb-2">
       {% for field, label, required in logical_fields %}
@@ -123,7 +125,8 @@
   <p class="text-muted mb-2" style="font-size:12px">
     Upload your Excel (.xlsx) or CSV export. The dashboard will remember the column mapping for next time.
   </p>
-  <form method="post" action="{{ url_for('import_upload') }}" enctype="multipart/form-data" class="row">
+  <form method="post" action="{{ url_for('import_upload') }}" enctype="multipart/form-data" class="row"
+        data-busy="Uploading…">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="file" name="csv_file" accept=".csv,.xlsx,.xls,.xlsm"
            style="font-size:12px;padding:6px;border:1px solid var(--border);border-radius:7px;background:white">

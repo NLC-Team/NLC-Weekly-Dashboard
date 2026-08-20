@@ -143,6 +143,29 @@
     var el = e.target.closest && e.target.closest('[data-toggle-prev]');
     if (el && el.previousElementSibling) el.previousElementSibling.click();
   });
+
+  // A <form data-busy="Importing…"> greys out its buttons once submitted and
+  // relabels the one that was clicked, so a slow POST (upload, import) can't be
+  // fired twice by an impatient second click. Registered after the data-confirm
+  // handler above and skipped when that cancelled the submit.
+  //
+  // The mutations are deferred with setTimeout(0): disabling a submit button
+  // *during* the submit event can drop its name/value from the request, which
+  // would break the Cancel button (it steers the post via formaction).
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (e.defaultPrevented || !form.matches || !form.matches('[data-busy]')) return;
+    var clicked = e.submitter;
+    var label = form.getAttribute('data-busy');
+    setTimeout(function () {
+      // Only relabel a button running the form's own action — "Importing…" on
+      // the Cancel button would be a lie.
+      if (clicked && label && !clicked.hasAttribute('formaction')) {
+        clicked.textContent = label;
+      }
+      form.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+    }, 0);
+  });
 </script>
 </body>
 </html>
