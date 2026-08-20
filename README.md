@@ -166,27 +166,43 @@ deliberately not in version control.
 | 3 | `dashboard.db` | Never committed: it holds client data, and it's per-user |
 
 **Item 3 is the one people underestimate.** The database is not just a cache of
-the last import — it accumulates history across imports, and some figures can
-only be derived from that history. In particular a **handoff** (Karbon moving a
-document to a different assignee) is only detectable by comparing two consecutive
-imports, so a database that has seen one import has none.
+the last import — it accumulates across imports, and a couple of figures can only
+come from that accumulation.
 
-Measured on a real database with 34 imports behind it, against the same items
-imported just once:
+Most of the dashboard does **not** depend on history, because it comes straight
+out of the export:
 
-| | With the accumulated history | After a single import |
-|---|---|---|
-| Rows visible | 5,394 | 5,394 (same) |
-| Returns / clients | 1,595 | 1,595 (same) |
-| **Overdue** | **1,124** | **1,363** |
-| **Weekly Review overdue** | **864** | **1,095** |
-| **Completed this week** | **51** | **0** |
-| Top-10, per-staff counts | — | all shift |
+- rows, returns, clients, staff, work types — from the file;
+- days open and overdue — from the file's Start Date and Due Date columns (on
+  real data, 100% of rows carry a start date and 98% a due date);
+- **completed this week** — from the file's own `Completed Date UTC` column, so
+  genuine completions are counted on the very first import.
 
-The overdue count inflates because a handed-off document has left its previous
-assignee's plate; with no handoff history those rows still count as that person's
-open, overdue work. So a fresh import doesn't just lose a nice-to-have — it
-reports a materially worse backlog than reality.
+The exception is a **handoff**: Karbon moving a document to a different assignee.
+That is only visible by comparing two consecutive imports, so a database that has
+seen one import has none. Two consequences on a first import:
+
+- the previous assignee gets no handoff credit, so if a given week's activity was
+  mostly reassignments rather than completions, "completed this week" reads low
+  (on one real week, all 51 rows were handoff credits, so it would have read 0);
+- a document that changed hands leaves a stale row behind, and until a second
+  import identifies it as a handoff it still counts as the *old* assignee's open,
+  overdue work — so the backlog reads somewhat worse than reality.
+
+Both correct themselves from the second weekly import onward. Verified: importing
+week 1 then a week 2 export with reassignments detects the handoffs and credits
+them, identically under this code and the version that preceded it.
+
+### Will the import itself behave the same?
+
+Yes, and that part is not history-dependent at all. Feeding one Karbon export
+through this code and through the version that preceded it produces identical
+results on every one of 149 compared properties: the same nine columns
+auto-detected, the same header signature, the same rows mapped, the same import
+counts, the same 53 statuses recognised, the same visible rows, returns, staff
+and work types — and a Weekly Review with the same top-10, the same per-staff
+sections and type breakdowns, the same staff detail pages, and the same Excel
+sheets.
 
 ### So, which do you actually want?
 
