@@ -7,6 +7,7 @@ and recording the ones a same-titled, differently-assigned row replaced.
 """
 from datetime import date, timedelta
 
+import config
 from data.store import Store
 
 DAY1 = date(2026, 6, 29)
@@ -335,8 +336,11 @@ def test_handoff_outside_the_window_is_not_counted():
     assert rv["completed_this_week"] == []
 
 
-def test_out_of_scope_owner_handoff_is_not_counted():
-    # Marcus Lorne-owned clients are outside the review's scope (_in_scope).
+def test_out_of_scope_owner_handoff_is_not_counted(monkeypatch):
+    # The review can be scoped to one partner's clients (config.REVIEW_OWNER_PREFIX,
+    # which comes from the untracked local_config.py). Pin it here so this test
+    # doesn't depend on the local install: "Marcus Lorne" is then out of scope.
+    monkeypatch.setattr(config, "REVIEW_OWNER_PREFIX", "owen")
     items = [_ritem("k_a", "Acme", "1040 Return", "Alice"),
              _ritem("k_b", "Acme", "1040 Return", "Bob")]
     for it in items:

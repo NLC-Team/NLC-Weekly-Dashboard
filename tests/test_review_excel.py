@@ -10,8 +10,18 @@ service.dashboard_data, and a second copy of that mirror would silently drift.
 """
 from datetime import datetime, timedelta
 
+import pytest
+
+import config
+
 from data import review
-from test_review import TODAY, _data, _item
+from test_review import OWNER_PREFIX, TODAY, _data, _item
+
+
+@pytest.fixture(autouse=True)
+def review_owner_scope(monkeypatch):
+    """Same owner scope as test_review, whose helpers these tests reuse."""
+    monkeypatch.setattr(config, "REVIEW_OWNER_PREFIX", OWNER_PREFIX)
 
 
 def _witem(key, client, title, days, due_in=None, **kw):

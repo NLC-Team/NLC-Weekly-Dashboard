@@ -21,20 +21,25 @@ from __future__ import annotations
 from collections import Counter
 from datetime import date, datetime, timedelta
 
+import config
 from config import normalize_return_type
 
 # ---- Weekly-review scope (business rules, kept here so they're easy to change) --
-# The review covers clients owned by Owen PLUS clients with no Client Owner
-# recorded at all (a blank export field, e.g. never set in Karbon) — but never a
-# different, named owner (e.g. "Marcus Lorne"). A blank owner is treated as "not
-# excluded" rather than silently dropped, so work doesn't fall out of the review
-# just because Karbon's Client Owner column was left empty. The review never
-# shows the "NO CORRESPONDENCE" statuses either. Owner is matched by prefix (the
-# data has "Owen Bradfield"); the status exclusion matches the SUBSTRING so it
-# catches "Ready To Start - NO CORRESPONDENCE" without touching legitimate
-# correspondence work titles (e.g. "IRS Correspondence - Refund Issue"), which
-# live in the title, not the status.
-OWNER_PREFIX = "Owen"
+# The review covers clients owned by ONE partner PLUS clients with no Client
+# Owner recorded at all (a blank export field, e.g. never set in Karbon) — but
+# never a different, named owner. A blank owner is treated as "not excluded"
+# rather than silently dropped, so work doesn't fall out of the review just
+# because Karbon's Client Owner column was left empty.
+#
+# Which partner that is names a real person, so it lives in the untracked
+# local_config.py as REVIEW_OWNER_PREFIX (see local_config.example.py) and is
+# read per call, not captured at import. Blank = no owner filtering at all.
+# Matched as a PREFIX, so the partner's first name alone is enough.
+#
+# The review never shows the "NO CORRESPONDENCE" statuses either. That exclusion
+# matches the SUBSTRING, so it catches "Ready To Start - NO CORRESPONDENCE"
+# without touching legitimate correspondence work titles (e.g. "IRS
+# Correspondence - Refund Issue"), which live in the title, not the status.
 EXCLUDE_STATUS_SUBSTR = "no correspondence"
 
 # Bogus / non-human assignees that must never appear in the review — e.g. Karbon's
@@ -48,8 +53,13 @@ def _is_excluded_assignee(name) -> bool:
 
 
 def _owner_in_scope(owner) -> bool:
+    # Read the prefix per call so an installation's local_config (or a test that
+    # patches it) applies without this module having to be re-imported.
+    prefix = config.REVIEW_OWNER_PREFIX
+    if not prefix:
+        return True          # no owner filtering configured
     o = (owner or "").strip().lower()
-    return not o or o.startswith(OWNER_PREFIX)
+    return not o or o.startswith(prefix)
 
 
 def _in_scope(it: dict) -> bool:

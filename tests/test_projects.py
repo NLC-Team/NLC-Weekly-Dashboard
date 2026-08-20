@@ -143,11 +143,14 @@ def test_build_projects_all_unassigned_falls_back_to_single_label():
     assert p["assignee_label"] == "Unassigned"
 
 
-def test_dashboard_data_normalizes_former_staff_to_unassigned(tmp_path):
+def test_dashboard_data_normalizes_former_staff_to_unassigned(tmp_path, monkeypatch):
+    # This rule is driven by config.UNASSIGNED_STAFF_NAMES, which comes from the
+    # untracked local_config.py. Set it explicitly so the test is self-contained.
+    monkeypatch.setattr(config, "UNASSIGNED_STAFF_NAMES", {"ivy fenwick"})
     s = Store(tmp_path / "unassigned.db")
     try:
         s.upsert_items([
-            {"item_key": "d1", "assignee": "Clara Bexley", "client": "Smith",
+            {"item_key": "d1", "assignee": "Ivy Fenwick", "client": "Smith",
              "title": "W-2", "status": "In Progress", "source_date": TODAY,
              "project_key": "c:smith", "return_type_raw": ""},
             {"item_key": "d2", "assignee": "Dana Whitfield", "client": "Acme",
@@ -156,11 +159,11 @@ def test_dashboard_data_normalizes_former_staff_to_unassigned(tmp_path):
         ], TODAY)
         data = service.dashboard_data(s, TODAY, overdue_days=14)
         by_client = {it["client"]: it for it in data["items"]}
-        assert by_client["Smith"]["assignee"] == "Unassigned"   # was "Clara Bexley"
+        assert by_client["Smith"]["assignee"] == "Unassigned"   # was "Ivy Fenwick"
         assert by_client["Acme"]["assignee"] == "Dana Whitfield"  # untouched
 
         names = {it["assignee"] for it in data["items"]}
-        assert "Clara Bexley" not in names
+        assert "Ivy Fenwick" not in names
     finally:
         s.close()
 

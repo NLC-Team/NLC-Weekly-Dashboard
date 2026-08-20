@@ -6,6 +6,7 @@ place (and so the packaged .exe behaves predictably).
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -14,37 +15,82 @@ from pathlib import Path
 
 APP_NAME = "Karbon Pending Dashboard"
 
-# --- Hidden property line-items -------------------------------------------
-# One staff member (Property Assignee) tracks real-estate/property line
-# items whose client or title names a property ("16 Franklin Street", "104
-# Winding Way", "719 Tenant", ...). These are not tax statements and the firm
-# wants them hidden from the WHOLE dashboard — but ONLY under that assignee, so
-# the same words on anyone else's work are untouched. Matched as whole words,
-# case-insensitive, against the client name and the statement title.
-HIDDEN_ITEM_ASSIGNEE = "Property Assignee"
-_HIDDEN_ITEM_WORDS = ("street", "deerfield", "way", "place", "tenant")
-_HIDDEN_ITEM_RE = re.compile(r"\b(?:" + "|".join(_HIDDEN_ITEM_WORDS) + r")\b", re.IGNORECASE)
+# --- Firm-specific rules (kept OUT of this repository) ----------------------
+# Three of the dashboard's rules are keyed on real names — a staff member whose
+# property line-items are hidden, internal/test clients that are excluded, and
+# former staff whose work is relabelled "Unassigned". Naming real employees and
+# clients in a public repo isn't acceptable, so those values live in an
+# untracked `local_config.py` beside this file.
+#
+# To set them up: copy `local_config.example.py` to `local_config.py` and fill in
+# your own values. Without that file the dashboard still runs perfectly — it just
+# applies none of these three rules, so nothing is hidden, excluded or relabelled.
+try:
+    import local_config as _local
+except ModuleNotFoundError:
+    _local = None
+
+
+def _firm_setting(name, default):
+    return getattr(_local, name, default) if _local is not None else default
+
+
+# The one staff member whose property line-items are hidden dashboard-wide, and
+# the words that mark an item as a property rather than a tax statement
+# ("16 Franklin Street", "104 Winding Way", "719 Tenant", ...). Blank disables it.
+HIDDEN_ITEM_ASSIGNEE = _firm_setting("HIDDEN_ITEM_ASSIGNEE", "")
+HIDDEN_ITEM_WORDS = tuple(_firm_setting("HIDDEN_ITEM_WORDS", ()))
+
+# Internal/test clients that should never appear anywhere on the dashboard, PDF
+# or Excel exports. Written as they read in Karbon; matching normalises both
+# sides (see _normalize_client) so case, spacing and punctuation don't matter.
+EXCLUDED_CLIENT_NAMES = set(_firm_setting("EXCLUDED_CLIENT_NAMES", ()))
+
+# Former/inactive staff whose few remaining documents should still count
+# everywhere (Overview, Overdue, Returns, Weekly Review, staff dropdowns), just
+# relabelled "Unassigned" rather than shown under their own name. Preferred over
+# deleting or reassigning their documents.
+UNASSIGNED_STAFF_NAMES = {str(n).strip().lower()
+                          for n in _firm_setting("UNASSIGNED_STAFF_NAMES", ())}
+
+# The firm's display name, used as the heading of the weekly review (and anywhere
+# else the firm needs naming).
+FIRM_NAME = _firm_setting("FIRM_NAME", "NLC Financial")
+
+# The Weekly Review covers only clients whose Client Owner starts with this
+# (lower-cased) prefix, plus clients with no owner recorded at all. Blank — the
+# default — means no owner filtering: every client is in scope. See
+# data/review.py::_owner_in_scope.
+REVIEW_OWNER_PREFIX = str(_firm_setting("REVIEW_OWNER_PREFIX", "")).strip().lower()
+
+
+@functools.lru_cache(maxsize=8)
+def _hidden_words_re(words: tuple):
+    """Whole-word, case-insensitive matcher for `words`, or None if empty.
+
+    Cached on the words tuple rather than built once at import, so a test (or a
+    reloaded local_config) that changes HIDDEN_ITEM_WORDS is picked up. The
+    empty case MUST return None, not a compiled pattern: `\\b(?:)\\b` matches
+    everywhere and would hide the entire dashboard.
+    """
+    if not words:
+        return None
+    return re.compile(r"\b(?:" + "|".join(re.escape(w) for w in words) + r")\b",
+                      re.IGNORECASE)
 
 
 def is_hidden_item(assignee, client, title) -> bool:
     """True if this item should be hidden dashboard-wide: it belongs to
-    HIDDEN_ITEM_ASSIGNEE and its client/title names a property (see above)."""
-    if (assignee or "").strip().lower() != HIDDEN_ITEM_ASSIGNEE.lower():
+    HIDDEN_ITEM_ASSIGNEE and its client/title names a property (see above).
+    Only that one assignee is affected — the same words on anyone else's work
+    are left alone."""
+    if not HIDDEN_ITEM_ASSIGNEE:
         return False
-    return bool(_HIDDEN_ITEM_RE.search(f"{client or ''} {title or ''}"))
+    if (assignee or "").strip().lower() != HIDDEN_ITEM_ASSIGNEE.strip().lower():
+        return False
+    pattern = _hidden_words_re(HIDDEN_ITEM_WORDS)
+    return bool(pattern and pattern.search(f"{client or ''} {title or ''}"))
 
-# --- Excluded clients --------------------------------------------------------
-# Internal/test clients that should never appear anywhere on the dashboard, PDF,
-# or Excel exports. Write the name as it reads in Karbon; matching normalizes
-# both sides (see _normalize_client), so case, stray whitespace and commas /
-# periods don't matter. Add a name here if a new test/internal client shows up
-# in an import.
-EXCLUDED_CLIENT_NAMES = {
-    "Anders, Jamie",
-    "NLC Financial Services, LLC (Internal)",
-    "Example Traning CONTACT",
-    "Test, Sample",
-}
 
 _CLIENT_PUNCT_RE = re.compile(r"[,.]")
 _CLIENT_WS_RE = re.compile(r"\s+")
@@ -54,30 +100,25 @@ def _normalize_client(client) -> str:
     """A client name reduced to a comparison key: lowercased, commas and periods
     dropped, runs of whitespace collapsed.
 
-    Karbon exports the same entity with inconsistent punctuation -- "NLC
-    Financial Services, LLC (Internal)" has also arrived without the comma --
-    and an exact-string match let 121 internal documents back into the counts
-    on that one character. Only punctuation and spacing are normalized: the
-    words themselves must still match, so distinct clients that merely share a
-    prefix ("NLC Financial Services, LLC - Alan") are unaffected.
+    Karbon exports the same entity with inconsistent punctuation -- a name has
+    arrived both with and without its comma -- and an exact-string match let 121
+    internal documents back into the counts on that one character. Only
+    punctuation and spacing are normalized: the words themselves must still
+    match, so distinct clients that merely share a prefix are unaffected.
     """
     s = _CLIENT_PUNCT_RE.sub("", (client or "").lower())
     return _CLIENT_WS_RE.sub(" ", s).strip()
 
 
-_EXCLUDED_CLIENT_KEYS = {_normalize_client(n) for n in EXCLUDED_CLIENT_NAMES}
+@functools.lru_cache(maxsize=8)
+def _excluded_client_keys(names: frozenset) -> frozenset:
+    return frozenset(_normalize_client(n) for n in names)
 
 
 def is_excluded_client(client) -> bool:
     """True if this client should be hidden dashboard-wide (see EXCLUDED_CLIENT_NAMES)."""
-    return _normalize_client(client) in _EXCLUDED_CLIENT_KEYS
-
-# Former/inactive staff whose few remaining documents should still count
-# everywhere on the dashboard (Overview, Overdue, Returns, Weekly Review, staff
-# dropdowns), just relabeled "Unassigned" rather than shown under their own
-# name. Matched case-insensitively, trimmed. Add a name here rather than
-# deleting/reassigning their documents.
-UNASSIGNED_STAFF_NAMES = {"clara bexley", "noor rahimi", "ivy fenwick"}
+    key = _normalize_client(client)
+    return bool(key) and key in _excluded_client_keys(frozenset(EXCLUDED_CLIENT_NAMES))
 
 
 def normalize_assignee(assignee: str) -> str:
@@ -87,27 +128,6 @@ def normalize_assignee(assignee: str) -> str:
     if (assignee or "").strip().lower() in UNASSIGNED_STAFF_NAMES:
         return "Unassigned"
     return assignee
-
-# The firm's display name, used as the heading of the weekly review (and anywhere
-# else the firm needs naming). Kept here so it changes in one place.
-FIRM_NAME = "NLC Financial"
-
-# Only email addresses on this domain may sign up / hold an account. Change this
-# one value if the firm's domain ever changes.
-ALLOWED_EMAIL_DOMAIN = "nlcfcpa.com"
-
-
-def is_allowed_email(email: str) -> bool:
-    """True if `email` is a plausibly-formed address on the allowed domain."""
-    if not isinstance(email, str):
-        return False
-    e = email.strip().lower()
-    return (
-        e.count("@") == 1
-        and " " not in e
-        and "." in e.split("@", 1)[1]
-        and e.endswith("@" + ALLOWED_EMAIL_DOMAIN)
-    )
 
 # Logical fields the dashboard understands. The user maps their own CSV column
 # names onto these on the import screen. `required` fields must be mapped before

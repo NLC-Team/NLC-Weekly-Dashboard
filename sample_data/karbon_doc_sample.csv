@@ -1,61 +1,61 @@
 Work ID,Client Name,Document,Return Type,Assignee,Status,Date Requested
-DOC-5000,John & Mary Smith,W-2 Wages,1040 Individual,Dana Whitfield,Requested,2026-06-24
-DOC-5001,John & Mary Smith,1099-INT Interest,1040 Individual,Dana Whitfield,Awaiting Client,2026-06-11
-DOC-5002,John & Mary Smith,1099-DIV Dividends,1040 Individual,Dana Whitfield,Requested,2026-05-29
-DOC-5003,John & Mary Smith,1099-B Brokerage,1040 Individual,Dana Whitfield,Awaiting Client,2026-05-16
-DOC-5004,Robert Chen,W-2 Wages,1040 Individual,James Patel,Awaiting Client,2026-06-17
-DOC-5005,Robert Chen,1099-INT Interest,1040 Individual,James Patel,Requested,2026-06-04
-DOC-5006,Robert Chen,1099-DIV Dividends,1040 Individual,James Patel,Awaiting Client,2026-05-22
-DOC-5007,Robert Chen,1099-B Brokerage,1040 Individual,James Patel,Requested,2026-05-09
-DOC-5008,Robert Chen,1098 Mortgage Interest,1040 Individual,James Patel,Awaiting Client,2026-04-26
-DOC-5009,Robert Chen,1095-A Health Insurance,1040 Individual,James Patel,Requested,2026-06-22
-DOC-5010,Robert Chen,Charitable Receipts,1040 Individual,James Patel,Awaiting Client,2026-06-09
-DOC-5011,Patel Family,W-2 Wages,1040 Individual,Maria Lopez,Requested,2026-06-10
-DOC-5012,Patel Family,1099-INT Interest,1040 Individual,Maria Lopez,Awaiting Client,2026-05-28
-DOC-5013,Patel Family,1099-DIV Dividends,1040 Individual,Maria Lopez,Requested,2026-05-15
-DOC-5014,Patel Family,1099-B Brokerage,1040 Individual,Maria Lopez,Awaiting Client,2026-05-02
-DOC-5015,Patel Family,1098 Mortgage Interest,1040 Individual,Maria Lopez,Requested,2026-04-19
-DOC-5016,Diane Foster,W-2 Wages,1040 Individual,Tom Becker,Awaiting Client,2026-06-03
-DOC-5017,Diane Foster,1099-INT Interest,1040 Individual,Tom Becker,Requested,2026-05-21
-DOC-5018,Diane Foster,1099-DIV Dividends,1040 Individual,Tom Becker,Awaiting Client,2026-05-08
-DOC-5019,Diane Foster,1099-B Brokerage,1040 Individual,Tom Becker,Requested,2026-04-25
-DOC-5020,Diane Foster,1098 Mortgage Interest,1040 Individual,Tom Becker,Awaiting Client,2026-06-21
-DOC-5021,Diane Foster,1095-A Health Insurance,1040 Individual,Tom Becker,Requested,2026-06-08
-DOC-5022,Diane Foster,Charitable Receipts,1040 Individual,Tom Becker,Awaiting Client,2026-05-26
-DOC-5023,Diane Foster,1099-R Retirement,1040 Individual,Tom Becker,Requested,2026-05-13
-DOC-5024,Acme Holdings Inc,Prior Year Return,1120 Corporation,Dana Whitfield,Requested,2026-05-27
-DOC-5025,Acme Holdings Inc,Year-End Trial Balance,1120 Corporation,Dana Whitfield,Awaiting Client,2026-05-14
-DOC-5026,Acme Holdings Inc,Bank Statements,1120 Corporation,Dana Whitfield,Requested,2026-05-01
-DOC-5027,Acme Holdings Inc,1099-NEC Issued,1120 Corporation,Dana Whitfield,Awaiting Client,2026-04-18
-DOC-5028,Acme Holdings Inc,Payroll Reports,1120 Corporation,Dana Whitfield,Requested,2026-06-14
-DOC-5029,Acme Holdings Inc,Fixed Asset / Depreciation Schedule,1120 Corporation,Dana Whitfield,Awaiting Client,2026-06-01
-DOC-5030,Briar Cafe LLC,Prior Year Return,1065 Partnership,James Patel,Awaiting Client,2026-05-20
-DOC-5031,Briar Cafe LLC,Year-End Trial Balance,1065 Partnership,James Patel,Requested,2026-05-07
-DOC-5032,Briar Cafe LLC,Bank Statements,1065 Partnership,James Patel,Awaiting Client,2026-04-24
-DOC-5033,Briar Cafe LLC,1099-NEC Issued,1065 Partnership,James Patel,Requested,2026-06-20
-DOC-5034,Cedar Dental PC,Prior Year Return,1120 Corporation,Maria Lopez,Requested,2026-05-13
-DOC-5035,Cedar Dental PC,Year-End Trial Balance,1120 Corporation,Maria Lopez,Awaiting Client,2026-04-30
-DOC-5036,Cedar Dental PC,Bank Statements,1120 Corporation,Maria Lopez,Requested,2026-04-17
-DOC-5037,Cedar Dental PC,1099-NEC Issued,1120 Corporation,Maria Lopez,Awaiting Client,2026-06-13
-DOC-5038,Cedar Dental PC,Payroll Reports,1120 Corporation,Maria Lopez,Requested,2026-05-31
-DOC-5039,Cedar Dental PC,Fixed Asset / Depreciation Schedule,1120 Corporation,Maria Lopez,Awaiting Client,2026-05-18
-DOC-5040,Cedar Dental PC,Loan Statements,1120 Corporation,Maria Lopez,Requested,2026-05-05
-DOC-5041,Delta Logistics LLC,Prior Year Return,1065 Partnership,Tom Becker,Awaiting Client,2026-05-06
-DOC-5042,Delta Logistics LLC,Year-End Trial Balance,1065 Partnership,Tom Becker,Requested,2026-04-23
-DOC-5043,Delta Logistics LLC,Bank Statements,1065 Partnership,Tom Becker,Awaiting Client,2026-06-19
-DOC-5044,Delta Logistics LLC,1099-NEC Issued,1065 Partnership,Tom Becker,Requested,2026-06-06
-DOC-5045,Delta Logistics LLC,Payroll Reports,1065 Partnership,Tom Becker,Awaiting Client,2026-05-24
-DOC-5046,Evergreen Farms,W-2 Wages,1040 Individual,Dana Whitfield,Requested,2026-04-29
-DOC-5047,Evergreen Farms,1099-INT Interest,1040 Individual,Dana Whitfield,Awaiting Client,2026-04-16
-DOC-5048,Evergreen Farms,1099-DIV Dividends,1040 Individual,Dana Whitfield,Requested,2026-06-12
-DOC-5049,Evergreen Farms,1099-B Brokerage,1040 Individual,Dana Whitfield,Awaiting Client,2026-05-30
-DOC-5050,Evergreen Farms,1098 Mortgage Interest,1040 Individual,Dana Whitfield,Requested,2026-05-17
-DOC-5051,Evergreen Farms,1095-A Health Insurance,1040 Individual,Dana Whitfield,Awaiting Client,2026-05-04
-DOC-5052,Evergreen Farms,Charitable Receipts,1040 Individual,Dana Whitfield,Requested,2026-04-21
-DOC-5053,Evergreen Farms,1099-R Retirement,1040 Individual,Dana Whitfield,Awaiting Client,2026-06-17
-DOC-5054,Harbor Realty Group,Prior Year Return,1120 Corporation,James Patel,Awaiting Client,2026-04-22
-DOC-5055,Harbor Realty Group,Year-End Trial Balance,1120 Corporation,James Patel,Requested,2026-06-18
-DOC-5056,Harbor Realty Group,Bank Statements,1120 Corporation,James Patel,Awaiting Client,2026-06-05
-DOC-5057,Harbor Realty Group,1099-NEC Issued,1120 Corporation,James Patel,Requested,2026-05-23
-DOC-5058,Harbor Realty Group,Payroll Reports,1120 Corporation,James Patel,Awaiting Client,2026-05-10
-DOC-5059,Harbor Realty Group,Fixed Asset / Depreciation Schedule,1120 Corporation,James Patel,Requested,2026-04-27
+DOC-5000,John & Mary Smith,W-2 Wages,1040 Individual,Dana Whitfield,Requested,2026-08-15
+DOC-5001,John & Mary Smith,1099-INT Interest,1040 Individual,Dana Whitfield,Awaiting Client,2026-08-02
+DOC-5002,John & Mary Smith,1099-DIV Dividends,1040 Individual,Dana Whitfield,Requested,2026-07-20
+DOC-5003,John & Mary Smith,1099-B Brokerage,1040 Individual,Dana Whitfield,Awaiting Client,2026-07-07
+DOC-5004,Robert Chen,W-2 Wages,1040 Individual,James Patel,Awaiting Client,2026-08-08
+DOC-5005,Robert Chen,1099-INT Interest,1040 Individual,James Patel,Requested,2026-07-26
+DOC-5006,Robert Chen,1099-DIV Dividends,1040 Individual,James Patel,Awaiting Client,2026-07-13
+DOC-5007,Robert Chen,1099-B Brokerage,1040 Individual,James Patel,Requested,2026-06-30
+DOC-5008,Robert Chen,1098 Mortgage Interest,1040 Individual,James Patel,Awaiting Client,2026-06-17
+DOC-5009,Robert Chen,1095-A Health Insurance,1040 Individual,James Patel,Requested,2026-08-13
+DOC-5010,Robert Chen,Charitable Receipts,1040 Individual,James Patel,Awaiting Client,2026-07-31
+DOC-5011,Patel Family,W-2 Wages,1040 Individual,Maria Lopez,Requested,2026-08-01
+DOC-5012,Patel Family,1099-INT Interest,1040 Individual,Maria Lopez,Awaiting Client,2026-07-19
+DOC-5013,Patel Family,1099-DIV Dividends,1040 Individual,Maria Lopez,Requested,2026-07-06
+DOC-5014,Patel Family,1099-B Brokerage,1040 Individual,Maria Lopez,Awaiting Client,2026-06-23
+DOC-5015,Patel Family,1098 Mortgage Interest,1040 Individual,Maria Lopez,Requested,2026-06-10
+DOC-5016,Diane Foster,W-2 Wages,1040 Individual,Tom Becker,Awaiting Client,2026-07-25
+DOC-5017,Diane Foster,1099-INT Interest,1040 Individual,Tom Becker,Requested,2026-07-12
+DOC-5018,Diane Foster,1099-DIV Dividends,1040 Individual,Tom Becker,Awaiting Client,2026-06-29
+DOC-5019,Diane Foster,1099-B Brokerage,1040 Individual,Tom Becker,Requested,2026-06-16
+DOC-5020,Diane Foster,1098 Mortgage Interest,1040 Individual,Tom Becker,Awaiting Client,2026-08-12
+DOC-5021,Diane Foster,1095-A Health Insurance,1040 Individual,Tom Becker,Requested,2026-07-30
+DOC-5022,Diane Foster,Charitable Receipts,1040 Individual,Tom Becker,Awaiting Client,2026-07-17
+DOC-5023,Diane Foster,1099-R Retirement,1040 Individual,Tom Becker,Requested,2026-07-04
+DOC-5024,Acme Holdings Inc,Prior Year Return,1120 Corporation,Dana Whitfield,Requested,2026-07-18
+DOC-5025,Acme Holdings Inc,Year-End Trial Balance,1120 Corporation,Dana Whitfield,Awaiting Client,2026-07-05
+DOC-5026,Acme Holdings Inc,Bank Statements,1120 Corporation,Dana Whitfield,Requested,2026-06-22
+DOC-5027,Acme Holdings Inc,1099-NEC Issued,1120 Corporation,Dana Whitfield,Awaiting Client,2026-06-09
+DOC-5028,Acme Holdings Inc,Payroll Reports,1120 Corporation,Dana Whitfield,Requested,2026-08-05
+DOC-5029,Acme Holdings Inc,Fixed Asset / Depreciation Schedule,1120 Corporation,Dana Whitfield,Awaiting Client,2026-07-23
+DOC-5030,Briar Cafe LLC,Prior Year Return,1065 Partnership,James Patel,Awaiting Client,2026-07-11
+DOC-5031,Briar Cafe LLC,Year-End Trial Balance,1065 Partnership,James Patel,Requested,2026-06-28
+DOC-5032,Briar Cafe LLC,Bank Statements,1065 Partnership,James Patel,Awaiting Client,2026-06-15
+DOC-5033,Briar Cafe LLC,1099-NEC Issued,1065 Partnership,James Patel,Requested,2026-08-11
+DOC-5034,Cedar Dental PC,Prior Year Return,1120 Corporation,Maria Lopez,Requested,2026-07-04
+DOC-5035,Cedar Dental PC,Year-End Trial Balance,1120 Corporation,Maria Lopez,Awaiting Client,2026-06-21
+DOC-5036,Cedar Dental PC,Bank Statements,1120 Corporation,Maria Lopez,Requested,2026-06-08
+DOC-5037,Cedar Dental PC,1099-NEC Issued,1120 Corporation,Maria Lopez,Awaiting Client,2026-08-04
+DOC-5038,Cedar Dental PC,Payroll Reports,1120 Corporation,Maria Lopez,Requested,2026-07-22
+DOC-5039,Cedar Dental PC,Fixed Asset / Depreciation Schedule,1120 Corporation,Maria Lopez,Awaiting Client,2026-07-09
+DOC-5040,Cedar Dental PC,Loan Statements,1120 Corporation,Maria Lopez,Requested,2026-06-26
+DOC-5041,Delta Logistics LLC,Prior Year Return,1065 Partnership,Tom Becker,Awaiting Client,2026-06-27
+DOC-5042,Delta Logistics LLC,Year-End Trial Balance,1065 Partnership,Tom Becker,Requested,2026-06-14
+DOC-5043,Delta Logistics LLC,Bank Statements,1065 Partnership,Tom Becker,Awaiting Client,2026-08-10
+DOC-5044,Delta Logistics LLC,1099-NEC Issued,1065 Partnership,Tom Becker,Requested,2026-07-28
+DOC-5045,Delta Logistics LLC,Payroll Reports,1065 Partnership,Tom Becker,Awaiting Client,2026-07-15
+DOC-5046,Evergreen Farms,W-2 Wages,1040 Individual,Dana Whitfield,Requested,2026-06-20
+DOC-5047,Evergreen Farms,1099-INT Interest,1040 Individual,Dana Whitfield,Awaiting Client,2026-06-07
+DOC-5048,Evergreen Farms,1099-DIV Dividends,1040 Individual,Dana Whitfield,Requested,2026-08-03
+DOC-5049,Evergreen Farms,1099-B Brokerage,1040 Individual,Dana Whitfield,Awaiting Client,2026-07-21
+DOC-5050,Evergreen Farms,1098 Mortgage Interest,1040 Individual,Dana Whitfield,Requested,2026-07-08
+DOC-5051,Evergreen Farms,1095-A Health Insurance,1040 Individual,Dana Whitfield,Awaiting Client,2026-06-25
+DOC-5052,Evergreen Farms,Charitable Receipts,1040 Individual,Dana Whitfield,Requested,2026-06-12
+DOC-5053,Evergreen Farms,1099-R Retirement,1040 Individual,Dana Whitfield,Awaiting Client,2026-08-08
+DOC-5054,Harbor Realty Group,Prior Year Return,1120 Corporation,James Patel,Awaiting Client,2026-06-13
+DOC-5055,Harbor Realty Group,Year-End Trial Balance,1120 Corporation,James Patel,Requested,2026-08-09
+DOC-5056,Harbor Realty Group,Bank Statements,1120 Corporation,James Patel,Awaiting Client,2026-07-27
+DOC-5057,Harbor Realty Group,1099-NEC Issued,1120 Corporation,James Patel,Requested,2026-07-14
+DOC-5058,Harbor Realty Group,Payroll Reports,1120 Corporation,James Patel,Awaiting Client,2026-07-01
+DOC-5059,Harbor Realty Group,Fixed Asset / Depreciation Schedule,1120 Corporation,James Patel,Requested,2026-06-18

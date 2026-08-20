@@ -1,71 +1,71 @@
 Work ID,Client Name,Work Title,Work Type,Assignee,Status,Start Date
-W-1000,Acme Holdings,1040 Individual Return - Acme,1040 Individual Return,Dana Whitfield,Ready to Send,2026-06-27
-W-1001,Foster & Sons,Monthly Bookkeeping - Foster,Monthly Bookkeeping,Maria Lopez,In Progress,2026-06-16
-W-1002,Kestrel Design,Audit Engagement - Kestrel,Audit Engagement,Aisha Khan,Completed,2026-06-05
-W-1003,Delta Logistics,Financial Statement - Delta,Financial Statement,James Patel,Awaiting Review,2026-05-25
-W-1004,Ironwood Mfg,Sales Tax Return - Ironwood,Sales Tax Return,Tom Becker,Sent,2026-05-14
-W-1005,Briar Cafe LLC,1120 Corp Return - Briar,1120 Corp Return,Dana Whitfield,Ready to Send,2026-05-03
-W-1006,Greenline Media,Payroll Filing - Greenline,Payroll Filing,Maria Lopez,In Progress,2026-04-22
-W-1007,Lumen Tax Co,1040 Individual Return - Lumen,1040 Individual Return,Aisha Khan,Completed,2026-06-24
-W-1008,Evergreen Farms,Monthly Bookkeeping - Evergreen,Monthly Bookkeeping,James Patel,Awaiting Review,2026-06-13
-W-1009,Juniper Health,Audit Engagement - Juniper,Audit Engagement,Tom Becker,Sent,2026-06-02
-W-1010,Cedar Dental,Financial Statement - Cedar,Financial Statement,Dana Whitfield,Ready to Send,2026-05-22
-W-1011,Harbor Realty,Sales Tax Return - Harbor,Sales Tax Return,Maria Lopez,In Progress,2026-05-11
-W-1012,Acme Holdings,1120 Corp Return - Acme,1120 Corp Return,Aisha Khan,Completed,2026-04-30
-W-1013,Foster & Sons,Payroll Filing - Foster,Payroll Filing,James Patel,Awaiting Review,2026-04-19
-W-1014,Kestrel Design,1040 Individual Return - Kestrel,1040 Individual Return,Tom Becker,Sent,2026-06-21
-W-1015,Delta Logistics,Monthly Bookkeeping - Delta,Monthly Bookkeeping,Dana Whitfield,Ready to Send,2026-06-10
-W-1016,Ironwood Mfg,Audit Engagement - Ironwood,Audit Engagement,Maria Lopez,In Progress,2026-05-30
-W-1017,Briar Cafe LLC,Financial Statement - Briar,Financial Statement,Aisha Khan,Completed,2026-05-19
-W-1018,Greenline Media,Sales Tax Return - Greenline,Sales Tax Return,James Patel,Awaiting Review,2026-05-08
-W-1019,Lumen Tax Co,1120 Corp Return - Lumen,1120 Corp Return,Tom Becker,Sent,2026-04-27
-W-1020,Evergreen Farms,Payroll Filing - Evergreen,Payroll Filing,Dana Whitfield,Ready to Send,2026-04-16
-W-1021,Juniper Health,1040 Individual Return - Juniper,1040 Individual Return,Maria Lopez,In Progress,2026-06-18
-W-1022,Cedar Dental,Monthly Bookkeeping - Cedar,Monthly Bookkeeping,Aisha Khan,Completed,2026-06-07
-W-1023,Harbor Realty,Audit Engagement - Harbor,Audit Engagement,James Patel,Awaiting Review,2026-05-27
-W-1024,Acme Holdings,Financial Statement - Acme,Financial Statement,Tom Becker,Sent,2026-05-16
-W-1025,Foster & Sons,Sales Tax Return - Foster,Sales Tax Return,Dana Whitfield,Ready to Send,2026-05-05
-W-1026,Kestrel Design,1120 Corp Return - Kestrel,1120 Corp Return,Maria Lopez,In Progress,2026-04-24
-W-1027,Delta Logistics,Payroll Filing - Delta,Payroll Filing,Aisha Khan,Completed,2026-06-26
-W-1028,Ironwood Mfg,1040 Individual Return - Ironwood,1040 Individual Return,James Patel,Awaiting Review,2026-06-15
-W-1029,Briar Cafe LLC,Monthly Bookkeeping - Briar,Monthly Bookkeeping,Tom Becker,Sent,2026-06-04
-W-1030,Greenline Media,Audit Engagement - Greenline,Audit Engagement,Dana Whitfield,Ready to Send,2026-05-24
-W-1031,Lumen Tax Co,Financial Statement - Lumen,Financial Statement,Maria Lopez,In Progress,2026-05-13
-W-1032,Evergreen Farms,Sales Tax Return - Evergreen,Sales Tax Return,Aisha Khan,Completed,2026-05-02
-W-1033,Juniper Health,1120 Corp Return - Juniper,1120 Corp Return,James Patel,Awaiting Review,2026-04-21
-W-1034,Cedar Dental,Payroll Filing - Cedar,Payroll Filing,Tom Becker,Sent,2026-06-23
-W-1035,Harbor Realty,1040 Individual Return - Harbor,1040 Individual Return,Dana Whitfield,Ready to Send,2026-06-12
-W-1036,Acme Holdings,Monthly Bookkeeping - Acme,Monthly Bookkeeping,Maria Lopez,In Progress,2026-06-01
-W-1037,Foster & Sons,Audit Engagement - Foster,Audit Engagement,Aisha Khan,Completed,2026-05-21
-W-1038,Kestrel Design,Financial Statement - Kestrel,Financial Statement,James Patel,Awaiting Review,2026-05-10
-W-1039,Delta Logistics,Sales Tax Return - Delta,Sales Tax Return,Tom Becker,Sent,2026-04-29
-W-1040,Ironwood Mfg,1120 Corp Return - Ironwood,1120 Corp Return,Dana Whitfield,Ready to Send,2026-04-18
-W-1041,Briar Cafe LLC,Payroll Filing - Briar,Payroll Filing,Maria Lopez,In Progress,2026-06-20
-W-1042,Greenline Media,1040 Individual Return - Greenline,1040 Individual Return,Aisha Khan,Completed,2026-06-09
-W-1043,Lumen Tax Co,Monthly Bookkeeping - Lumen,Monthly Bookkeeping,James Patel,Awaiting Review,2026-05-29
-W-1044,Evergreen Farms,Audit Engagement - Evergreen,Audit Engagement,Tom Becker,Sent,2026-05-18
-W-1045,Juniper Health,Financial Statement - Juniper,Financial Statement,Dana Whitfield,Ready to Send,2026-05-07
-W-1046,Cedar Dental,Sales Tax Return - Cedar,Sales Tax Return,Maria Lopez,In Progress,2026-04-26
-W-1047,Harbor Realty,1120 Corp Return - Harbor,1120 Corp Return,Aisha Khan,Completed,2026-04-15
-W-1048,Acme Holdings,Payroll Filing - Acme,Payroll Filing,James Patel,Awaiting Review,2026-06-17
-W-1049,Foster & Sons,1040 Individual Return - Foster,1040 Individual Return,Tom Becker,Sent,2026-06-06
-W-1050,Kestrel Design,Monthly Bookkeeping - Kestrel,Monthly Bookkeeping,Dana Whitfield,Ready to Send,2026-05-26
-W-1051,Delta Logistics,Audit Engagement - Delta,Audit Engagement,Maria Lopez,In Progress,2026-05-15
-W-1052,Ironwood Mfg,Financial Statement - Ironwood,Financial Statement,Aisha Khan,Completed,2026-05-04
-W-1053,Briar Cafe LLC,Sales Tax Return - Briar,Sales Tax Return,James Patel,Awaiting Review,2026-04-23
-W-1054,Greenline Media,1120 Corp Return - Greenline,1120 Corp Return,Tom Becker,Sent,2026-06-25
-W-1055,Lumen Tax Co,Payroll Filing - Lumen,Payroll Filing,Dana Whitfield,Ready to Send,2026-06-14
-W-1056,Evergreen Farms,1040 Individual Return - Evergreen,1040 Individual Return,Maria Lopez,In Progress,2026-06-03
-W-1057,Juniper Health,Monthly Bookkeeping - Juniper,Monthly Bookkeeping,Aisha Khan,Completed,2026-05-23
-W-1058,Cedar Dental,Audit Engagement - Cedar,Audit Engagement,James Patel,Awaiting Review,2026-05-12
-W-1059,Harbor Realty,Financial Statement - Harbor,Financial Statement,Tom Becker,Sent,2026-05-01
-W-1060,Acme Holdings,Sales Tax Return - Acme,Sales Tax Return,Dana Whitfield,Ready to Send,2026-04-20
-W-1061,Foster & Sons,1120 Corp Return - Foster,1120 Corp Return,Maria Lopez,In Progress,2026-06-22
-W-1062,Kestrel Design,Payroll Filing - Kestrel,Payroll Filing,Aisha Khan,Completed,2026-06-11
-W-1063,Delta Logistics,1040 Individual Return - Delta,1040 Individual Return,James Patel,Awaiting Review,2026-05-31
-W-1064,Ironwood Mfg,Monthly Bookkeeping - Ironwood,Monthly Bookkeeping,Tom Becker,Sent,2026-05-20
-W-1065,Briar Cafe LLC,Audit Engagement - Briar,Audit Engagement,Dana Whitfield,Ready to Send,2026-05-09
-W-1066,Greenline Media,Financial Statement - Greenline,Financial Statement,Maria Lopez,In Progress,2026-04-28
-W-1067,Lumen Tax Co,Sales Tax Return - Lumen,Sales Tax Return,Aisha Khan,Completed,2026-04-17
-W-1068,Evergreen Farms,1120 Corp Return - Evergreen,1120 Corp Return,James Patel,Awaiting Review,2026-06-19
-W-1069,Juniper Health,Payroll Filing - Juniper,Payroll Filing,Tom Becker,Sent,2026-06-08
+W-1000,Acme Holdings,1040 Individual Return - Acme,1040 Individual Return,Dana Whitfield,Ready to Send,2026-08-18
+W-1001,Foster & Sons,Monthly Bookkeeping - Foster,Monthly Bookkeeping,Maria Lopez,In Progress,2026-08-07
+W-1002,Kestrel Design,Audit Engagement - Kestrel,Audit Engagement,Aisha Khan,Completed,2026-07-27
+W-1003,Delta Logistics,Financial Statement - Delta,Financial Statement,James Patel,Awaiting Review,2026-07-16
+W-1004,Ironwood Mfg,Sales Tax Return - Ironwood,Sales Tax Return,Tom Becker,Sent,2026-07-05
+W-1005,Briar Cafe LLC,1120 Corp Return - Briar,1120 Corp Return,Dana Whitfield,Ready to Send,2026-06-24
+W-1006,Greenline Media,Payroll Filing - Greenline,Payroll Filing,Maria Lopez,In Progress,2026-06-13
+W-1007,Lumen Tax Co,1040 Individual Return - Lumen,1040 Individual Return,Aisha Khan,Completed,2026-08-15
+W-1008,Evergreen Farms,Monthly Bookkeeping - Evergreen,Monthly Bookkeeping,James Patel,Awaiting Review,2026-08-04
+W-1009,Juniper Health,Audit Engagement - Juniper,Audit Engagement,Tom Becker,Sent,2026-07-24
+W-1010,Cedar Dental,Financial Statement - Cedar,Financial Statement,Dana Whitfield,Ready to Send,2026-07-13
+W-1011,Harbor Realty,Sales Tax Return - Harbor,Sales Tax Return,Maria Lopez,In Progress,2026-07-02
+W-1012,Acme Holdings,1120 Corp Return - Acme,1120 Corp Return,Aisha Khan,Completed,2026-06-21
+W-1013,Foster & Sons,Payroll Filing - Foster,Payroll Filing,James Patel,Awaiting Review,2026-06-10
+W-1014,Kestrel Design,1040 Individual Return - Kestrel,1040 Individual Return,Tom Becker,Sent,2026-08-12
+W-1015,Delta Logistics,Monthly Bookkeeping - Delta,Monthly Bookkeeping,Dana Whitfield,Ready to Send,2026-08-01
+W-1016,Ironwood Mfg,Audit Engagement - Ironwood,Audit Engagement,Maria Lopez,In Progress,2026-07-21
+W-1017,Briar Cafe LLC,Financial Statement - Briar,Financial Statement,Aisha Khan,Completed,2026-07-10
+W-1018,Greenline Media,Sales Tax Return - Greenline,Sales Tax Return,James Patel,Awaiting Review,2026-06-29
+W-1019,Lumen Tax Co,1120 Corp Return - Lumen,1120 Corp Return,Tom Becker,Sent,2026-06-18
+W-1020,Evergreen Farms,Payroll Filing - Evergreen,Payroll Filing,Dana Whitfield,Ready to Send,2026-06-07
+W-1021,Juniper Health,1040 Individual Return - Juniper,1040 Individual Return,Maria Lopez,In Progress,2026-08-09
+W-1022,Cedar Dental,Monthly Bookkeeping - Cedar,Monthly Bookkeeping,Aisha Khan,Completed,2026-07-29
+W-1023,Harbor Realty,Audit Engagement - Harbor,Audit Engagement,James Patel,Awaiting Review,2026-07-18
+W-1024,Acme Holdings,Financial Statement - Acme,Financial Statement,Tom Becker,Sent,2026-07-07
+W-1025,Foster & Sons,Sales Tax Return - Foster,Sales Tax Return,Dana Whitfield,Ready to Send,2026-06-26
+W-1026,Kestrel Design,1120 Corp Return - Kestrel,1120 Corp Return,Maria Lopez,In Progress,2026-06-15
+W-1027,Delta Logistics,Payroll Filing - Delta,Payroll Filing,Aisha Khan,Completed,2026-08-17
+W-1028,Ironwood Mfg,1040 Individual Return - Ironwood,1040 Individual Return,James Patel,Awaiting Review,2026-08-06
+W-1029,Briar Cafe LLC,Monthly Bookkeeping - Briar,Monthly Bookkeeping,Tom Becker,Sent,2026-07-26
+W-1030,Greenline Media,Audit Engagement - Greenline,Audit Engagement,Dana Whitfield,Ready to Send,2026-07-15
+W-1031,Lumen Tax Co,Financial Statement - Lumen,Financial Statement,Maria Lopez,In Progress,2026-07-04
+W-1032,Evergreen Farms,Sales Tax Return - Evergreen,Sales Tax Return,Aisha Khan,Completed,2026-06-23
+W-1033,Juniper Health,1120 Corp Return - Juniper,1120 Corp Return,James Patel,Awaiting Review,2026-06-12
+W-1034,Cedar Dental,Payroll Filing - Cedar,Payroll Filing,Tom Becker,Sent,2026-08-14
+W-1035,Harbor Realty,1040 Individual Return - Harbor,1040 Individual Return,Dana Whitfield,Ready to Send,2026-08-03
+W-1036,Acme Holdings,Monthly Bookkeeping - Acme,Monthly Bookkeeping,Maria Lopez,In Progress,2026-07-23
+W-1037,Foster & Sons,Audit Engagement - Foster,Audit Engagement,Aisha Khan,Completed,2026-07-12
+W-1038,Kestrel Design,Financial Statement - Kestrel,Financial Statement,James Patel,Awaiting Review,2026-07-01
+W-1039,Delta Logistics,Sales Tax Return - Delta,Sales Tax Return,Tom Becker,Sent,2026-06-20
+W-1040,Ironwood Mfg,1120 Corp Return - Ironwood,1120 Corp Return,Dana Whitfield,Ready to Send,2026-06-09
+W-1041,Briar Cafe LLC,Payroll Filing - Briar,Payroll Filing,Maria Lopez,In Progress,2026-08-11
+W-1042,Greenline Media,1040 Individual Return - Greenline,1040 Individual Return,Aisha Khan,Completed,2026-07-31
+W-1043,Lumen Tax Co,Monthly Bookkeeping - Lumen,Monthly Bookkeeping,James Patel,Awaiting Review,2026-07-20
+W-1044,Evergreen Farms,Audit Engagement - Evergreen,Audit Engagement,Tom Becker,Sent,2026-07-09
+W-1045,Juniper Health,Financial Statement - Juniper,Financial Statement,Dana Whitfield,Ready to Send,2026-06-28
+W-1046,Cedar Dental,Sales Tax Return - Cedar,Sales Tax Return,Maria Lopez,In Progress,2026-06-17
+W-1047,Harbor Realty,1120 Corp Return - Harbor,1120 Corp Return,Aisha Khan,Completed,2026-06-06
+W-1048,Acme Holdings,Payroll Filing - Acme,Payroll Filing,James Patel,Awaiting Review,2026-08-08
+W-1049,Foster & Sons,1040 Individual Return - Foster,1040 Individual Return,Tom Becker,Sent,2026-07-28
+W-1050,Kestrel Design,Monthly Bookkeeping - Kestrel,Monthly Bookkeeping,Dana Whitfield,Ready to Send,2026-07-17
+W-1051,Delta Logistics,Audit Engagement - Delta,Audit Engagement,Maria Lopez,In Progress,2026-07-06
+W-1052,Ironwood Mfg,Financial Statement - Ironwood,Financial Statement,Aisha Khan,Completed,2026-06-25
+W-1053,Briar Cafe LLC,Sales Tax Return - Briar,Sales Tax Return,James Patel,Awaiting Review,2026-06-14
+W-1054,Greenline Media,1120 Corp Return - Greenline,1120 Corp Return,Tom Becker,Sent,2026-08-16
+W-1055,Lumen Tax Co,Payroll Filing - Lumen,Payroll Filing,Dana Whitfield,Ready to Send,2026-08-05
+W-1056,Evergreen Farms,1040 Individual Return - Evergreen,1040 Individual Return,Maria Lopez,In Progress,2026-07-25
+W-1057,Juniper Health,Monthly Bookkeeping - Juniper,Monthly Bookkeeping,Aisha Khan,Completed,2026-07-14
+W-1058,Cedar Dental,Audit Engagement - Cedar,Audit Engagement,James Patel,Awaiting Review,2026-07-03
+W-1059,Harbor Realty,Financial Statement - Harbor,Financial Statement,Tom Becker,Sent,2026-06-22
+W-1060,Acme Holdings,Sales Tax Return - Acme,Sales Tax Return,Dana Whitfield,Ready to Send,2026-06-11
+W-1061,Foster & Sons,1120 Corp Return - Foster,1120 Corp Return,Maria Lopez,In Progress,2026-08-13
+W-1062,Kestrel Design,Payroll Filing - Kestrel,Payroll Filing,Aisha Khan,Completed,2026-08-02
+W-1063,Delta Logistics,1040 Individual Return - Delta,1040 Individual Return,James Patel,Awaiting Review,2026-07-22
+W-1064,Ironwood Mfg,Monthly Bookkeeping - Ironwood,Monthly Bookkeeping,Tom Becker,Sent,2026-07-11
+W-1065,Briar Cafe LLC,Audit Engagement - Briar,Audit Engagement,Dana Whitfield,Ready to Send,2026-06-30
+W-1066,Greenline Media,Financial Statement - Greenline,Financial Statement,Maria Lopez,In Progress,2026-06-19
+W-1067,Lumen Tax Co,Sales Tax Return - Lumen,Sales Tax Return,Aisha Khan,Completed,2026-06-08
+W-1068,Evergreen Farms,1120 Corp Return - Evergreen,1120 Corp Return,James Patel,Awaiting Review,2026-08-10
+W-1069,Juniper Health,Payroll Filing - Juniper,Payroll Filing,Tom Becker,Sent,2026-07-30

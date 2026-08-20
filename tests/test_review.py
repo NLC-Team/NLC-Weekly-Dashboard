@@ -1,8 +1,21 @@
 from datetime import date, datetime, timedelta
 
+import pytest
+
+import config
 from data import analytics, review
 
 TODAY = date(2026, 6, 29)
+
+# The review's owner filter comes from the untracked local_config.py, so these
+# tests pin it to a known invented partner. "Owen Bradfield" is therefore in
+# scope, a blank owner is in scope, and any other named owner is out.
+OWNER_PREFIX = "owen"
+
+
+@pytest.fixture(autouse=True)
+def review_owner_scope(monkeypatch):
+    monkeypatch.setattr(config, "REVIEW_OWNER_PREFIX", OWNER_PREFIX)
 
 
 def _item(key, client, title, days, assignee="Sarah", rtype_raw="1040 Individual",
