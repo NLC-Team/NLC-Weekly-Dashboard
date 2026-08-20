@@ -4,7 +4,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from ui.theme import COLORS, FONTS
+from ui.theme import COLORS
 from ui.widgets import KPICard, SortableTable
 
 

@@ -7,7 +7,6 @@ columns onto our logical fields, then turn each row into a normalised record.
 from __future__ import annotations
 
 import hashlib
-import re
 from datetime import date
 
 import pandas as pd

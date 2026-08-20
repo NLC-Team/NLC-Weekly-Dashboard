@@ -6,6 +6,8 @@ upload"). Root causes: (1) no file selected -> silent redirect, no message;
 session wipe back to step 0, no message; (3) an exception during the actual
 import -> unhandled, blank error page, nothing logged anywhere (pythonw.exe
 has no console). All three now show a clear on-page message instead."""
+import io
+
 import pytest
 
 import config
@@ -65,7 +67,7 @@ def test_full_upload_and_run_happy_path(client):
     upload = client.post(
         "/import/upload",
         data={"csrf_token": "test-token",
-              "csv_file": (io_bytes := __import__("io").BytesIO(_csv_bytes()), "test.csv")},
+              "csv_file": (io.BytesIO(_csv_bytes()), "test.csv")},
         content_type="multipart/form-data",
     )
     assert upload.status_code in (200, 302)

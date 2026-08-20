@@ -13,9 +13,7 @@ import logging
 import os
 import re
 import secrets
-import sqlite3
 import sys
-import tempfile
 import threading
 import time
 import webbrowser
@@ -374,6 +372,31 @@ def _too_large(_e):
     return render_template("error.html", code=413, title="File too large",
                            message="That upload is bigger than the 30 MB limit. "
                                    "Export a smaller file and try again."), 413
+
+
+@app.errorhandler(404)
+def _not_found(_e):
+    """A mistyped address, or one of the app's own abort(404)s (an archive week
+    that isn't a real week label). Without this the visitor got Werkzeug's bare
+    unstyled page while every other error was branded."""
+    return render_template("error.html", code=404, title="Page not found",
+                           message="That address isn't part of the dashboard. "
+                                   "Use the menu on the left to get back."), 404
+
+
+@app.errorhandler(500)
+def _server_error(_e):
+    """Replace the bare "Internal Server Error" body with something actionable.
+
+    Deliberately does NOT log: Flask has already logged the traceback (to the
+    console and to app.log, see the file handler at the top), and logging it
+    twice makes the real cause harder to find. Kept minimal on purpose — an
+    error page that can itself raise is worse than no error page.
+    """
+    return render_template("error.html", code=500, title="Something went wrong",
+                           message="The dashboard hit an unexpected error. The details "
+                                   "are in app.log next to the database. Try again, and "
+                                   "if it keeps happening send that log on."), 500
 
 
 # ---- Installable web app (PWA) -------------------------------------------
@@ -1309,8 +1332,7 @@ def _server_already_running() -> bool:
 
 
 def _open_browser():
-    import time
-    time.sleep(1.8)
+    time.sleep(1.8)          # give the server a moment to bind before we knock
     webbrowser.open(URL)
 
 

@@ -180,7 +180,7 @@ build.spec           PyInstaller spec for the legacy desktop app
 ```bash
 pip install -r requirements.txt
 python src/webapp.py             # run the dashboard
-python -m pytest tests -q        # run the tests (197 of them)
+python -m pytest tests -q        # run the tests
 python sample_data/generate_sample.py       # regenerate sample CSVs
 python sample_data/generate_doc_sample.py
 ```
