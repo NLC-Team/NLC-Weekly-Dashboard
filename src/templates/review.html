@@ -119,7 +119,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="3" style="text-align:center;padding:24px;color:var(--muted)">No staff member has Owen-owned work right now.</td></tr>
+        <tr><td colspan="3" style="text-align:center;padding:24px;color:var(--muted)">No staff member has {{ review.scope_work }} right now.</td></tr>
         {% endfor %}
       </tbody>
     </table>

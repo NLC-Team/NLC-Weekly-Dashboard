@@ -52,6 +52,20 @@ def _is_excluded_assignee(name) -> bool:
     return _norm_assignee(name).lower() in EXCLUDE_ASSIGNEES
 
 
+def scope_clients_label() -> str:
+    """How to describe the review's scope in a phrase about clients: the
+    configured label plus "clients", e.g. "Acme-owned clients". With no owner
+    filter configured there is nothing to qualify, so it reads "all clients"."""
+    label = config.REVIEW_SCOPE_LABEL
+    return f"{label} clients" if label else "all clients"
+
+
+def scope_work_label() -> str:
+    """Same, for a phrase about work: "Acme-owned work", else plain "work"."""
+    label = config.REVIEW_SCOPE_LABEL
+    return f"{label} work" if label else "work"
+
+
 def _owner_in_scope(owner) -> bool:
     # Read the prefix per call so an installation's local_config (or a test that
     # patches it) applies without this module having to be re-imported.
@@ -205,7 +219,7 @@ def _types_list(counter) -> list:
 
 
 def _staff_doc_stats(data: dict, week_start: date, week_end: date) -> dict:
-    """Per-staff tallies over the Owen-owned work, at DOCUMENT grain — same
+    """Per-staff tallies over the in-scope work, at DOCUMENT grain — same
     scope and "open" definition as build_staff_workbook (the Excel export), so
     a staff member's OPEN count and document lists here always agree with their
     own Excel worklist. Two narrow exceptions, both confirmed on real data:
@@ -286,7 +300,8 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
     complete even though only the top few rows are listed.
 
     Ordering matches the dashboard: overdue statements by days_overdue, worst first.
-    Scope: only Owen-owned clients, excluding NO CORRESPONDENCE statuses (see _in_scope).
+    Scope: see _in_scope — one partner's clients (config.REVIEW_OWNER_PREFIX) plus
+    unowned ones, excluding NO CORRESPONDENCE statuses.
     """
     # "Completed this week" is the trailing 7 days ending on the most recent
     # IMPORT date -- see _completed_window. Counted per DOCUMENT from Karbon's
@@ -370,7 +385,7 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
     # _staff_doc_stats (a due-today overdue count; someone who only completed
     # work this week gets no Excel sheet at all).
     # Each staff row links to their own detail page (see build_staff_page). A
-    # staff member appears if they have ANY Owen-owned open/overdue/just-completed
+    # staff member appears if they have ANY in-scope open/overdue/just-completed
     # work this week, so every relevant person gets a row and a page.
     pstats = _staff_doc_stats(data, week_start, week_end)
     staff_rows = []
@@ -399,6 +414,10 @@ def build_review(data: dict, firm_name: str, generated_at, top_n: int = 10,
         "per_staff": per_staff,
         "staff_rows": staff_rows,
         "total_overdue": len(overdue),
+        # Wording for the scope, so the page, the PDF and the staff pages all
+        # describe it the same way without hardcoding a partner's name.
+        "scope_clients": scope_clients_label(),
+        "scope_work": scope_work_label(),
     }
 
 
@@ -457,7 +476,7 @@ def _xlsx_row(it: dict) -> dict:
 def build_staff_workbook(data: dict, firm_name: str, generated_at) -> dict:
     """The weekly review as one worklist PER STAFF MEMBER, ready for Excel.
 
-    Same live data and the same scope as the rest of the review (_in_scope: Owen-
+    Same live data and the same scope as the rest of the review (_in_scope: owner-
     owned or blank-owner clients, no NO CORRESPONDENCE statuses, no Karbon Support),
     but shaped as a worklist instead of a report:
 
@@ -526,7 +545,7 @@ def build_staff_workbook(data: dict, firm_name: str, generated_at) -> dict:
 def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
                      top_n: int = 10, recent_n: int = 10,
                      last_import_date: date | None = None) -> dict:
-    """One staff member's detail page for the weekly review (Owen-owned scope).
+    """One staff member's detail page for the weekly review (same owner scope).
 
     Headline tiles (completed this week / open / overdue, plus open/overdue
     broken out by work type) come from _staff_doc_stats — the SAME tallies the
@@ -603,4 +622,6 @@ def build_staff_page(data: dict, firm_name: str, generated_at, staff_name: str,
         "overdue_by_type": _types_list(b["overdue_by_type"]),
         "top_overdue": top_overdue,
         "recent_overdue": recent_overdue,
+        "scope_clients": scope_clients_label(),
+        "scope_work": scope_work_label(),
     }

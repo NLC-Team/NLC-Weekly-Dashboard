@@ -146,7 +146,7 @@ def _done(key, client, title, completed_on, **kw):
 
 def test_completed_this_week_window_and_scope():
     # The window is the trailing 7 days ENDING on the import date (inclusive at
-    # both ends), and stays inside the review's Owen-owned scope.
+    # both ends), and stays inside the review's owner scope.
     gen = datetime(2026, 6, 29, 7, 0)
     items = [
         _done("a", "Acme", "W-2", IMPORT_DAY),
@@ -160,7 +160,7 @@ def test_completed_this_week_window_and_scope():
     assert "Acme" in clients      # completed on the import day itself
     assert "Beta" in clients      # oldest day still inside the 7-day window
     assert "Ceta" not in clients  # one day past the window
-    assert "Delt" not in clients  # inside the window but not Owen-owned
+    assert "Delt" not in clients  # inside the window but out of owner scope
     assert "Echo" not in clients  # no completion date at all
     assert r["week_start"] == WINDOW_FIRST_DAY.isoformat()
 
@@ -396,3 +396,40 @@ def test_staff_page_credit_only_current_assignee():
     assert bob_page["open"] == 1
     assert bob_page["overdue"] == 1
     assert bob_page["open_by_type"] == [{"type": "Tax: 1040", "count": 1}]
+
+
+# ---- Scope wording -------------------------------------------------------
+# The Weekly Review page, its PDF and each staff page describe which clients
+# they cover. That phrase used to be a hardcoded partner name; it now comes from
+# config.REVIEW_SCOPE_LABEL so the repo carries no real name. These pin both the
+# configured wording and the no-config fallback.
+
+def test_scope_wording_uses_the_configured_label(monkeypatch):
+    monkeypatch.setattr(config, "REVIEW_SCOPE_LABEL", "Acme-owned")
+    assert review.scope_clients_label() == "Acme-owned clients"
+    assert review.scope_work_label() == "Acme-owned work"
+
+
+def test_scope_wording_falls_back_when_unconfigured(monkeypatch):
+    # A bare clone has no local_config.py, so there is no owner filter and
+    # nothing to qualify -- claiming a partner's scope would be a lie.
+    monkeypatch.setattr(config, "REVIEW_SCOPE_LABEL", "")
+    assert review.scope_clients_label() == "all clients"
+    assert review.scope_work_label() == "work"
+
+
+def test_build_review_carries_the_wording_for_the_page_and_pdf(monkeypatch):
+    monkeypatch.setattr(config, "REVIEW_SCOPE_LABEL", "Acme-owned")
+    gen = datetime(2026, 6, 29, 9, 0)
+    rv = review.build_review(_data([_item("a", "Acme", "W-2", 40)]), "NLC", gen)
+    assert rv["scope_clients"] == "Acme-owned clients"
+    assert rv["scope_work"] == "Acme-owned work"
+
+
+def test_build_staff_page_carries_the_same_wording(monkeypatch):
+    monkeypatch.setattr(config, "REVIEW_SCOPE_LABEL", "Acme-owned")
+    gen = datetime(2026, 6, 29, 9, 0)
+    page = review.build_staff_page(_data([_item("a", "Acme", "W-2", 40, assignee="Bob")]),
+                                   "NLC", gen, "Bob")
+    assert page["scope_clients"] == "Acme-owned clients"
+    assert page["scope_work"] == "Acme-owned work"

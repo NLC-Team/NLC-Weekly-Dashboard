@@ -3,7 +3,8 @@
 {# One staff member's weekly-review page (data/review.build_staff_page). Wide,
    landscape-style layout: a row of headline tiles across the top, the open-work
    breakdown by type, then the two statement lists side by side so the page uses
-   its full width. Owen-owned scope, matching the rest of the Weekly Review. #}
+   its full width. Same owner scope as the rest of the Weekly Review; how that
+   scope is worded comes from review.scope_clients (see config.REVIEW_SCOPE_LABEL). #}
 
 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
   <h1 style="border:none;padding:0;margin:0">{{ staff.staff }}</h1>
@@ -15,7 +16,7 @@
 <div style="height:1.5px;background:var(--green);width:100%;margin-bottom:16px"></div>
 
 <p class="subtitle" style="margin-top:0">
-  Weekly Review · Owen-owned clients · this week since {{ staff.week_start }}.
+  Weekly Review · {{ staff.scope_clients }} · this week since {{ staff.week_start }}.
   Every figure counts individual <em>documents</em> currently assigned to this person —
   the same basis as their Excel worklist.
 </p>

@@ -27,6 +27,15 @@ FIRM_NAME = "Your Firm Name"
 # then in scope, which is what you want if the review should cover the firm.
 REVIEW_OWNER_PREFIX = ""
 
+# How that scope is WORDED on the Weekly Review page, in its PDF, and on each
+# staff page. An adjective phrase that gets a noun appended, so "Dana-owned"
+# renders as "Dana-owned clients" and "Dana-owned work".
+#
+# Leave it "" and those phrases read "all clients" and "work" instead — the
+# honest wording when REVIEW_OWNER_PREFIX is also blank. If you set a prefix,
+# set this too, or the page will claim a firm-wide scope it doesn't have.
+REVIEW_SCOPE_LABEL = ""
+
 # --- Hidden property line-items --------------------------------------------
 # If ONE staff member tracks real-estate/property line items that aren't tax
 # statements, name them here and the dashboard will hide those items everywhere.
@@ -46,9 +55,9 @@ HIDDEN_ITEM_WORDS = ("street", "way", "place", "tenant")
 #
 # Write each name as it reads in Karbon. Matching normalises both sides, so
 # case, stray whitespace and commas/periods don't matter: "Test, Sample",
-# "Test, Sample" and "  test,, Owen " are all the same entry. The words themselves
-# must still match, so a client that merely shares a prefix ("Acme Holdings LLC
-# - Alan") is NOT excluded by an entry for "Acme Holdings LLC".
+# "TEST SAMPLE" and "  test,, sample " are all the same entry. The words
+# themselves must still match, so a client that merely shares a prefix ("Acme
+# Holdings LLC - Alan") is NOT excluded by an entry for "Acme Holdings LLC".
 EXCLUDED_CLIENT_NAMES = {
     "Test, Example",
     "Your Firm Name, LLC (Internal)",

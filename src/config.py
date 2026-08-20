@@ -63,6 +63,13 @@ FIRM_NAME = _firm_setting("FIRM_NAME", "NLC Financial")
 # data/review.py::_owner_in_scope.
 REVIEW_OWNER_PREFIX = str(_firm_setting("REVIEW_OWNER_PREFIX", "")).strip().lower()
 
+# How that scope is DESCRIBED on the Weekly Review page, its PDF and the staff
+# pages — an adjective phrase that gets a noun appended, e.g. "Acme-owned" reads
+# as "Acme-owned clients" / "Acme-owned work". It names a partner, so it lives in
+# local_config.py with the prefix above. Blank falls back to "all clients" /
+# "work", which is the honest wording when no owner filter is set.
+REVIEW_SCOPE_LABEL = str(_firm_setting("REVIEW_SCOPE_LABEL", "")).strip()
+
 
 @functools.lru_cache(maxsize=8)
 def _hidden_words_re(words: tuple):

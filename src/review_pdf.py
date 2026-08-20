@@ -635,7 +635,8 @@ def _summary_page(doc: _Doc, rv: dict):
     section_header()
     rows = rv.get("staff_rows", [])
     if not rows:
-        doc.text(LEFT, "No staff member has Owen-owned work right now.", size=10.5, color=MUTED)
+        doc.text(LEFT, f"No staff member has {rv.get('scope_work', 'work')} right now.",
+                 size=10.5, color=MUTED)
         return
     for s in rows:
         types = s.get("overdue_by_type") or []
@@ -681,8 +682,8 @@ def _staff_page(doc: _Doc, sp: dict):
     doc.advance(0.006)
     doc.rule(color=GREEN, width=1.2)
     doc.advance(0.024)
-    doc.text(LEFT, f"Weekly Review · Owen-owned clients · this week since "
-             f"{sp.get('week_start', '')}", size=9.5, color=MUTED)
+    doc.text(LEFT, f"Weekly Review · {sp.get('scope_clients', 'all clients')} · "
+             f"this week since {sp.get('week_start', '')}", size=9.5, color=MUTED)
     doc.advance(0.030)
 
     # Headline tiles
@@ -729,8 +730,8 @@ def _firm_page(doc: _Doc, rv: dict):
     doc.advance(0.006)
     doc.rule(color=GREEN, width=1.2)
     doc.advance(0.03)
-    doc.text(LEFT, "Across all staff · Owen-owned clients · live from the dashboard",
-             size=9.5, color=MUTED)
+    doc.text(LEFT, f"Across all staff · {rv.get('scope_clients', 'all clients')} · "
+             f"live from the dashboard", size=9.5, color=MUTED)
     doc.advance(0.04)
 
     # Full-width, stacked — the Employee column needs the room, and 10+10 rows fit
