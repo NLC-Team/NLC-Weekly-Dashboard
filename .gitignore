@@ -3,12 +3,33 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# Local application data (per-user database lives in %LOCALAPPDATA%, but ignore any stray copies)
+# ---------------------------------------------------------------------------
+# REAL CLIENT DATA — never commit any of this. This repository is public.
+# The dashboard's own exports (Weekly Review .xlsx/.pdf) and any Karbon export
+# contain named taxpayers and their engagement status. Keep them outside the
+# repo folder if you can; these rules are the backstop if you don't.
+# ---------------------------------------------------------------------------
 *.db
+*.xlsx
+*.xls
+*.xlsm
+weekly-review-*.pdf
+# ...but the synthetic fixtures under sample_data/ are safe and ARE tracked.
+!sample_data/*.csv
 
-# PyInstaller working dir (the built exe in dist/ is kept intentionally)
+# Build output. The desktop .exe is ~48 MB and rebuildable from build.spec
+# (`python -m PyInstaller build.spec`), so it is deliberately not tracked.
 build/
+dist/
 *.spec.bak
+
+# Local machine-specific overrides (see src/local_config.example.py)
+src/local_config.py
+
+# Internal planning notes. Kept locally, not published: they quote per-employee
+# workload figures and local filesystem paths, and their long filenames used to
+# make `git clone` fail on Windows (260-character path limit).
+docs/superpowers/
 
 # Isolated worktrees for subagent-driven plan execution
 .worktrees/

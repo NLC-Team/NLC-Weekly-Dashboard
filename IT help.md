@@ -81,14 +81,19 @@ else opens `http://<server-name>:5000` in their browser. No install needed on st
 - **Please back it up:** a **nightly copy of that `.db` file to the S: drive** is safe and
   enough. (Copying the file is fine; *running* the app from a share is not.)
 
-## Security notes
-- **Internal only** — do not open port 5000 to the public internet.
-- The connection is currently plain **HTTP**, so the login password travels unencrypted on the
-  internal network. Acceptable short-term for an internal tool, but **HTTPS is recommended** — see
-  step 5 above (it also unlocks installing the dashboard as an app). Put it behind a reverse proxy
-  (IIS / nginx / Caddy) with a firm/internal certificate.
-- Access is controlled in the app itself: staff sign in with their **@nlcfcpa.com email +
-  password**, and new sign-ups require an admin to approve them.
+## Security notes — please read this one
+
+- **The app has NO sign-in.** There are no accounts and no passwords: whoever can reach
+  `http://<host>:5000` sees the whole dashboard, including client data, and can import
+  and delete data. Being on the internal network *is* the permission.
+- Therefore: **internal only.** Open port 5000 to the Domain/Private profiles and
+  **never** to the public internet — no port forwarding, no tunnel, no external proxy.
+  If the dashboard ever needs to be reachable from outside, tell us first: it needs an
+  authentication layer in front of it before that can happen.
+- The connection is plain **HTTP**, so page contents travel unencrypted on the internal
+  network. **HTTPS is recommended** — see step 5 above (it also unlocks installing the
+  dashboard as an app). Put it behind a reverse proxy (IIS / nginx / Caddy) with a
+  firm/internal certificate.
 
 ---
 
@@ -98,13 +103,6 @@ else opens `http://<server-name>:5000` in their browser. No install needed on st
 - **App entry point:** `src\webapp.py` — launch with `pythonw src\webapp.py` (or `Run Dashboard.bat`).
 - **Port:** 5000 (changeable). **Threads:** 8 (Waitress). **No outbound internet calls** are
   required for the app to function.
-- **Note on the `.exe`:** the file `dist\KarbonDashboard.exe` is an **older desktop version**,
-  not this web app — please ignore it for this hosting task.
-
-## Optional: outbound email (not required to run)
-The app can email admins when someone requests access. This currently **doesn't send**, because
-Microsoft 365 is rejecting it — either **Authenticated SMTP is disabled** on the mailbox, or the
-server's IP isn't an allowed **Direct Send** sender (it was seen on a Spamhaus block list). This
-is **optional**: the app shows the same "new access request" alert inside the dashboard whether
-or not email works. If we want the email alerts too, IT would need to either enable Authenticated
-SMTP on a sending mailbox, or allow Direct Send from the host's IP.
+- **No outbound email.** The app never sends mail and needs no SMTP relay or mailbox.
+- **No `.exe` to deploy.** An older standalone desktop build used to be checked in; it is
+  gone. Host `src\webapp.py` as described above — that is the real app.

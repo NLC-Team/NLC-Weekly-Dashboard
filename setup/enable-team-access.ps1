@@ -1,7 +1,7 @@
 #Requires -RunAsAdministrator
 <#
-    enable-team-access.ps1  -  one-shot deploy for the NLC Dashboard
-    ------------------------------------------------------------------
+    enable-team-access.ps1  -  one-shot deploy of the NLC Dashboard on a host
+    -------------------------------------------------------------------------
     Fixes the TWO things that block full team use, in one elevated run:
 
       1. FIREWALL   - allow inbound TCP 5000 from the internal network only
@@ -13,48 +13,77 @@
                       nobody signed in.
 
     It also removes two landmines that a naive setup hits (see comments below):
-      - runs the service AS serviceaccount, so it opens the REAL database
-        (the DB + WinPython live in that profile), and
+      - runs the service AS the account that owns the database, so it opens the
+        REAL data rather than a fresh empty one, and
       - copies the app to a LOCAL folder first, so the boot service does not
-        depend on the S: drive (\\fileserver\Clients) being mapped/reachable.
+        depend on a mapped drive / file server being reachable.
 
-    RUN THIS ON THE HOST (THE-HOST) FROM AN ELEVATED PowerShell:
-        powershell -ExecutionPolicy Bypass -File .\enable-team-access.ps1
+    !! SECURITY !!  The dashboard has NO sign-in: anything that can reach port
+    5000 gets the whole dashboard, including client data. The firewall rule
+    below is therefore the only access control there is. Keep the port on the
+    internal network and never forward it from the internet.
+
+    Run FROM AN ELEVATED PowerShell ON THE HOST that should serve the dashboard:
+
+        powershell -ExecutionPolicy Bypass -File .\enable-team-access.ps1 `
+            -ServiceUser 'YOURDOMAIN\theaccount' `
+            -SourceRoot  '\\yourfileserver\share\path\to\AI Dashboard'
 
     Re-running it is safe (idempotent) and is also how you DEPLOY code updates:
-    it re-copies src\ from the share and restarts the service.
+    it re-copies src\ from the source and restarts the service.
 #>
+param(
+    # Domain account the service runs as. It MUST be the profile that owns the
+    # dashboard database and the WinPython install (landmine #1) — the app reads
+    # %LOCALAPPDATA% of whoever it runs as to find its database.
+    [Parameter(Mandatory = $true)]
+    [string] $ServiceUser,
+
+    # Where this repo lives. Use a UNC path, not a mapped drive letter: an
+    # elevated session often does not have the same drive mappings.
+    [Parameter(Mandatory = $true)]
+    [string] $SourceRoot,
+
+    # Local deploy target on the host (removes the network dependency, landmine #2).
+    [string] $DeployRoot = 'C:\KarbonDashboard',
+
+    # WinPython interpreter inside the SERVICE account's profile. Defaults to the
+    # standard location for that account; pass it explicitly if yours differs.
+    [string] $Python,
+
+    [int] $Port = 5000
+)
 
 $ErrorActionPreference = 'Stop'
 
-# ---- Settings (change here if anything moves) ----------------------------
 $TaskName    = 'KarbonDashboard'
-$Port        = 5000
-$ServiceUser = 'YOURDOMAIN\serviceaccount'   # MUST own the DB + WinPython (see landmine #1)
-
-# Source of the code (UNC, not S:  -- an elevated session may not have S: mapped).
-$SourceRoot  = '\\fileserver\Clients\KARBON\Update Project - Sarah''s Excels\2025 Tax Season\Summer Interns\AI Dashboard'
-# Local deploy target on the host (removes the network dependency -- landmine #2).
-$DeployRoot  = 'C:\KarbonDashboard'
-# Absolute path to the WinPython interpreter in serviceaccount's profile.
-$Python      = 'C:\Users\serviceaccount\AppData\Local\WP\WPy64-313130\python\python.exe'
-
+$ruleName    = "Karbon Dashboard (LAN $Port)"
 $LauncherCmd = Join-Path $DeployRoot 'run-service.cmd'
 $LogDir      = Join-Path $DeployRoot 'logs'
-$ruleName    = 'Karbon Dashboard (LAN 5000)'
+
+# Derive the interpreter path from the service account's profile unless told otherwise.
+if (-not $Python) {
+    $shortUser = ($ServiceUser -split '\\')[-1]
+    $Python = "C:\Users\$shortUser\AppData\Local\WP\WPy64-313130\python\python.exe"
+}
 
 function Step($n, $m) { Write-Host "`n=== [$n] $m ===" -ForegroundColor Cyan }
 
 # ---- Pre-flight ----------------------------------------------------------
 Step 0 'Pre-flight checks'
-if (-not (Test-Path $Python))      { throw "WinPython not found at $Python. Is serviceaccount's profile present on this host?" }
-if (-not (Test-Path "$SourceRoot\src\webapp.py")) { throw "Cannot read source at $SourceRoot (need access to the \\fileserver\Clients share)." }
+if (-not (Test-Path $Python)) {
+    throw "WinPython not found at $Python. Is $ServiceUser's profile present on this host? Pass -Python to override."
+}
+if (-not (Test-Path "$SourceRoot\src\webapp.py")) {
+    throw "Cannot read source at $SourceRoot (check the path and that this elevated session can reach the share)."
+}
 Write-Host "  Python : $Python"
 Write-Host "  Source : $SourceRoot"
 Write-Host "  Deploy : $DeployRoot"
+Write-Host "  Runs as: $ServiceUser"
 
 # ---- 1. Copy the app to a LOCAL folder -----------------------------------
-# Landmine #2: the boot service must not depend on the S: mapping / file server.
+# Landmine #2: the boot service must not depend on a drive mapping / file server.
 Step 1 'Copying app to a local folder on the host'
 New-Item -ItemType Directory -Path $DeployRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $LogDir     -Force | Out-Null
@@ -80,10 +109,11 @@ Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue | Remov
 New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow `
     -Protocol TCP -LocalPort $Port -Profile Domain,Private -Enabled True | Out-Null
 Write-Host "  Rule '$ruleName' created for Domain+Private (Public deliberately excluded)."
+Write-Host "  Remember: there is no sign-in, so this rule is the access control." -ForegroundColor Yellow
 
 # ---- 3. Always-on Scheduled Task -----------------------------------------
-# Landmine #1: run AS serviceaccount so %LOCALAPPDATA% resolves to that profile and the
-# app opens the REAL database (1096 items) rather than a fresh empty one.
+# Landmine #1: run as the DB-owning account so %LOCALAPPDATA% resolves to that
+# profile and the app opens the REAL database rather than a fresh empty one.
 Step 3 "Registering the always-on service (Scheduled Task '$TaskName')"
 Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue |
     ForEach-Object { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue;
@@ -121,7 +151,9 @@ Step 4 'Verifying the dashboard is up'
 $up = $false
 foreach ($i in 1..20) {
     try {
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/login" -UseBasicParsing -TimeoutSec 3
+        # "/" is the health check: there is no login page, and every page is
+        # reachable without a session.
+        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -UseBasicParsing -TimeoutSec 3
         if ($r.StatusCode -eq 200) { $up = $true; break }
     } catch { Start-Sleep -Milliseconds 500 }
 }
@@ -141,6 +173,6 @@ if ($up -and $listen) {
 }
 
 Write-Host "`nOptional next steps for IT (not required to work):" -ForegroundColor DarkGray
-Write-Host "  - DNS 'nlcdashboard' -> this host, + reverse proxy on :80 to drop the ':$Port'." -ForegroundColor DarkGray
+Write-Host "  - An internal DNS name -> this host, + reverse proxy on :80 to drop the ':$Port'." -ForegroundColor DarkGray
 Write-Host "  - HTTPS via that proxy (needed for 'install as an app'/PWA on other machines)." -ForegroundColor DarkGray
 Write-Host "  - To update the app later: re-run this script (it re-copies src\ and restarts)." -ForegroundColor DarkGray

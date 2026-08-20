@@ -41,11 +41,12 @@ if ($listen) {
     else { $bad += "Listening on $addr`:$Port only - NOT reachable from other machines (expected 0.0.0.0)." }
 } else { $bad += "Nothing is listening on port $Port." }
 
-# 4. HTTP response (loopback)
+# 4. HTTP response (loopback). Probes "/" — the dashboard has no login page, and
+#    every page is reachable without a session, so the overview is the health check.
 try {
-    $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/login" -UseBasicParsing -TimeoutSec 4
-    if ($r.StatusCode -eq 200) { $ok += "HTTP 200 from the login page (app is serving)" }
-    else { $bad += "Login page returned HTTP $($r.StatusCode)." }
+    $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -UseBasicParsing -TimeoutSec 4
+    if ($r.StatusCode -eq 200) { $ok += "HTTP 200 from the dashboard (app is serving)" }
+    else { $bad += "The dashboard returned HTTP $($r.StatusCode)." }
 } catch { $bad += "No HTTP response on http://127.0.0.1:$Port ." }
 
 # ---- Report --------------------------------------------------------------
