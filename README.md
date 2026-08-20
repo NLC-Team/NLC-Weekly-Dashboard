@@ -135,6 +135,10 @@ and drop it into your `src/` folder, then restart. Send it over a normal interna
 channel — it is ordinary configuration, not a secret, but it does name people, so
 don't post it anywhere public.
 
+> This file is necessary but **not sufficient** for two machines to agree. The
+> database matters too — see
+> [Making a second machine show the same figures](#making-a-second-machine-show-the-same-figures).
+
 **Starting fresh instead:** copy the documented template and fill it in.
 
 ```bash
@@ -146,6 +150,61 @@ card at the top of the page shows *active* with a summary of what's applied, or
 *not configured* with an explanation. The startup log
 (`%LOCALAPPDATA%\KarbonPendingDashboard\app.log`) says the same thing on every
 launch.
+
+---
+
+## Making a second machine show the same figures
+
+Cloning the repo gets you the same *application*. It does **not** get you the same
+*dashboard*, because two of the three things that produce the numbers are
+deliberately not in version control.
+
+| # | What | Why a clone doesn't have it |
+|---|------|------------------------------|
+| 1 | The code | ✅ you have it — that's this repo |
+| 2 | `src/local_config.py` | Git-ignored: it names real staff and clients |
+| 3 | `dashboard.db` | Never committed: it holds client data, and it's per-user |
+
+**Item 3 is the one people underestimate.** The database is not just a cache of
+the last import — it accumulates history across imports, and some figures can
+only be derived from that history. In particular a **handoff** (Karbon moving a
+document to a different assignee) is only detectable by comparing two consecutive
+imports, so a database that has seen one import has none.
+
+Measured on a real database with 34 imports behind it, against the same items
+imported just once:
+
+| | With the accumulated history | After a single import |
+|---|---|---|
+| Rows visible | 5,394 | 5,394 (same) |
+| Returns / clients | 1,595 | 1,595 (same) |
+| **Overdue** | **1,124** | **1,363** |
+| **Weekly Review overdue** | **864** | **1,095** |
+| **Completed this week** | **51** | **0** |
+| Top-10, per-staff counts | — | all shift |
+
+The overdue count inflates because a handed-off document has left its previous
+assignee's plate; with no handoff history those rows still count as that person's
+open, overdue work. So a fresh import doesn't just lose a nice-to-have — it
+reports a materially worse backlog than reality.
+
+### So, which do you actually want?
+
+**To read the firm's real numbers → use the one server, don't run your own copy.**
+Open `http://<host>:5000` in a browser. That is what the dashboard is for: one
+machine holds the database, everyone else views it. Two copies of the app with two
+databases will always drift, and SQLite corrupts if two machines open one file
+over a network share — so "just point them both at the same file" is not a fix.
+
+**To develop, test or demo → clone and import `sample_data/`.** You get a fully
+working dashboard in a minute, with invented clients, and nothing you do can
+affect the real data.
+
+**To genuinely replicate an installation** (rebuilding a host, moving machines):
+copy all three — the repo, that machine's `src/local_config.py`, and its
+`dashboard.db` from `%LOCALAPPDATA%\KarbonPendingDashboard\`. Copy the `.db` file
+while the app is stopped, and remember it contains client data, so move it the way
+you'd move any client file.
 
 ---
 
