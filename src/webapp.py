@@ -1303,6 +1303,43 @@ def import_cancel():
     return redirect(url_for("import_view"))
 
 
+# ---- Housekeeping --------------------------------------------------------
+
+# A staged upload is deleted when the import runs (import_run) or is cancelled
+# (import_cancel). But a wizard that is simply ABANDONED — the tab is closed, or
+# the session is lost — orphans its file with nothing left to delete it, and
+# these files are real Karbon exports, i.e. client data. Left alone they
+# accumulate forever: this installation had three of them, up to three weeks old.
+# So sweep anything past its welcome on startup.
+UPLOAD_TTL_DAYS = 7
+
+
+def sweep_stale_uploads(ttl_days: int = UPLOAD_TTL_DAYS) -> int:
+    """Delete staged import files older than `ttl_days`. Returns how many went.
+
+    Deliberately forgiving: a file that can't be removed (still open, already
+    gone, permissions) is skipped rather than raising, because housekeeping must
+    never stop the dashboard from starting. It gets another chance next launch.
+    """
+    cutoff = time.time() - ttl_days * 86400
+    removed = 0
+    try:
+        entries = list(config.default_import_upload_dir().iterdir())
+    except OSError:
+        return 0
+    for path in entries:
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    if removed:
+        logging.info("Housekeeping: removed %d abandoned import upload(s) "
+                     "older than %d days", removed, ttl_days)
+    return removed
+
+
 # ---- Startup -------------------------------------------------------------
 
 # BIND_HOST is what the server listens on. "0.0.0.0" = every network interface,
@@ -1343,6 +1380,11 @@ if __name__ == "__main__":
         logging.info("Dashboard already running — opening existing instance.")
         webbrowser.open(URL)
         sys.exit(0)
+
+    # Only when actually launched as the server — NOT at import time, or merely
+    # importing webapp (which the tests and the .bat pre-flight both do) would
+    # reach into the real app-data folder and delete files.
+    sweep_stale_uploads()
 
     threading.Thread(target=_open_browser, daemon=True).start()
     try:
