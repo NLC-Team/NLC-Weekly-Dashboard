@@ -30,6 +30,14 @@ try:
 except ModuleNotFoundError:
     _local = None
 
+# True when a local_config.py was found. Without one the dashboard runs fine but
+# applies NONE of the rules below, so its figures will legitimately differ from an
+# installation that has one — more rows, more overdue, former staff under their own
+# names, and a firm-wide Weekly Review. That is a real difference, not a bug, so it
+# is surfaced on the Settings page and in the startup log rather than left silent.
+FIRM_RULES_LOADED = _local is not None
+FIRM_RULES_PATH = str(Path(__file__).with_name("local_config.py"))
+
 
 def _firm_setting(name, default):
     return getattr(_local, name, default) if _local is not None else default

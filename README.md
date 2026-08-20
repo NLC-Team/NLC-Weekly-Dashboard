@@ -106,24 +106,46 @@ your imports.
 
 ---
 
-## Firm-specific settings (optional)
+## Firm-specific settings — read this if your numbers must match someone else's
 
-Four rules are keyed on names, so they're kept out of this repo — they'd mean
-publishing real employees and clients:
+Five rules are keyed on real names, so they are kept out of this repo; publishing
+them would mean publishing employees and clients:
 
 - one assignee whose property line-items are hidden everywhere,
 - internal/test clients excluded from every page and export,
 - former staff whose work still counts but shows as "Unassigned",
-- the partner whose clients the Weekly Review covers.
+- the partner whose clients the Weekly Review covers,
+- how that scope is worded on screen and in the PDF.
 
-To use them, copy the template and edit it:
+They live in `src/local_config.py`, which is **git-ignored** — so a fresh clone
+does not have it, and never commit it.
+
+> ### ⚠️ A clone will not show the same figures as an existing installation
+> Without `local_config.py` the dashboard runs perfectly well but applies **none**
+> of those rules. On the same database that means: **more rows**, a **higher
+> overdue count**, former staff listed under their own names instead of
+> "Unassigned", excluded internal clients back in the totals, and a Weekly Review
+> covering **every** client rather than one partner's book.
+>
+> Nothing is broken — the two copies are just configured differently. But if you
+> are comparing numbers with a colleague, this is almost certainly why they differ.
+
+**To match an existing installation:** get that machine's `src/local_config.py`
+and drop it into your `src/` folder, then restart. Send it over a normal internal
+channel — it is ordinary configuration, not a secret, but it does name people, so
+don't post it anywhere public.
+
+**Starting fresh instead:** copy the documented template and fill it in.
 
 ```bash
 cp src/local_config.example.py src/local_config.py
 ```
 
-`src/local_config.py` is git-ignored — **never commit it**. Without it the
-dashboard works fine and simply applies none of those four rules.
+Either way, **Settings** tells you which state you're in: a "Firm-specific rules"
+card at the top of the page shows *active* with a summary of what's applied, or
+*not configured* with an explanation. The startup log
+(`%LOCALAPPDATA%\KarbonPendingDashboard\app.log`) says the same thing on every
+launch.
 
 ---
 

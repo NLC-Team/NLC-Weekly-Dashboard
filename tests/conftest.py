@@ -29,3 +29,4 @@ def neutral_firm_rules(monkeypatch):
     monkeypatch.setattr(config, "EXCLUDED_CLIENT_NAMES", set())
     monkeypatch.setattr(config, "UNASSIGNED_STAFF_NAMES", set())
     monkeypatch.setattr(config, "REVIEW_OWNER_PREFIX", "")
+    monkeypatch.setattr(config, "REVIEW_SCOPE_LABEL", "")

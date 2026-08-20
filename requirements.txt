@@ -1,9 +1,19 @@
-# Runtime dependencies — all four are required to start the dashboard.
-flask          # the web app itself
-waitress       # production WSGI server the app serves through
-pandas         # CSV / Excel parsing for the import wizard
-matplotlib     # renders the overview charts as PNGs
-openpyxl       # read .xlsx / .xls Excel imports, write the review workbook
+# Runtime dependencies — all five are imported at startup, so the dashboard will
+# not run without every one of them.
+#
+# Pinned with ~= (same minor series, patch updates allowed). The point is that a
+# colleague who clones this months from now gets the same behaviour you have,
+# rather than whatever major version happens to be current — pandas and
+# matplotlib both make breaking changes between minors. Versions below are the
+# ones this dashboard is actually running on.
+#
+# If a pin won't install on your Python, loosen that one line to a bare name and
+# say so — better a known-different version than a machine that can't start.
+flask~=3.1.3        # the web app itself
+waitress~=3.0.2     # production WSGI server the app serves through
+pandas~=3.0.3       # CSV / Excel parsing for the import wizard
+matplotlib~=3.11.0  # renders the overview charts as PNGs
+openpyxl~=3.1.5     # read .xlsx / .xls Excel imports, write the review workbook
 
 # Build-only (only needed to rebuild the legacy desktop .exe from build.spec)
 pyinstaller

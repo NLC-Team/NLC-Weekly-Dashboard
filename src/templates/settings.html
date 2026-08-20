@@ -5,6 +5,61 @@
 
 {% if msg %}<div class="msg {{ 'msg-ok' if msg_type == 'ok' else 'msg-err' }}">{{ msg }}</div>{% endif %}
 
+<!-- Firm-specific rules. Shown first, and loudly when missing: without them this
+     copy shows MORE rows than one that has them, which otherwise looks like a
+     data problem rather than a configuration difference. -->
+<div class="card mb-2" {% if not firm_rules.loaded %}style="border-color:var(--danger-border)"{% endif %}>
+  <div class="card-title">
+    Firm-specific rules
+    {% if firm_rules.loaded %}
+    <span class="badge badge-done">active</span>
+    {% else %}
+    <span class="badge badge-overdue">not configured</span>
+    {% endif %}
+  </div>
+  {% if firm_rules.loaded %}
+  <p class="text-muted mb-1" style="font-size:12px">
+    Loaded from <span class="monospace">local_config.py</span>. These filters apply to
+    every page, the Weekly Review, the PDF and the Excel export.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <tbody>
+        <tr><td style="font-weight:600">Hidden property line-items</td>
+            <td>{{ firm_rules.hidden_assignee or 'none' }}</td></tr>
+        <tr><td style="font-weight:600">Excluded clients</td>
+            <td>{{ firm_rules.excluded_clients }}</td></tr>
+        <tr><td style="font-weight:600">Former staff shown as "Unassigned"</td>
+            <td>{{ firm_rules.former_staff }}</td></tr>
+        <tr><td style="font-weight:600">Weekly Review covers</td>
+            <td>{{ firm_rules.review_scope }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="font-size:13px;color:var(--danger);font-weight:600;margin-bottom:8px">
+    No <span class="monospace">local_config.py</span> was found, so none of the firm's
+    filters are being applied.
+  </p>
+  <p class="text-muted mb-1" style="font-size:12px">
+    This dashboard still works, but its figures will <strong>not match</strong> a copy
+    that has the file: nothing is hidden or excluded, former staff appear under their
+    own names instead of "Unassigned", and the Weekly Review covers
+    <strong>{{ firm_rules.review_scope }}</strong> rather than one partner's clients.
+    Expect more rows and a higher overdue count.
+  </p>
+  <p class="text-muted mb-1" style="font-size:12px">
+    To match another installation, copy that machine's
+    <span class="monospace">local_config.py</span> into
+    <span class="monospace">src\</span> and restart. Starting fresh? Copy
+    <span class="monospace">src\local_config.example.py</span> to
+    <span class="monospace">src\local_config.py</span> and fill it in. It is
+    deliberately not in version control — it names real staff and clients.
+  </p>
+  <p class="monospace" style="background:var(--bg);padding:8px 12px;border-radius:6px;font-size:11px;color:var(--text)">{{ firm_rules.path }}</p>
+  {% endif %}
+</div>
+
 <!-- Overdue threshold -->
 <div class="card mb-2">
   <div class="card-title">Overdue threshold</div>

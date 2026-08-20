@@ -56,6 +56,20 @@ _log_file_handler.setFormatter(logging.Formatter(
     "%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
 logging.getLogger().addHandler(_log_file_handler)
 
+# Say up front whether the firm-specific rules were found. Without them the
+# dashboard runs, but hides/excludes/relabels nothing and the Weekly Review goes
+# firm-wide -- so its figures differ from an installation that has them. That is
+# the single most likely reason two copies of this app disagree, so it goes in the
+# log where anyone comparing numbers will find it.
+if config.FIRM_RULES_LOADED:
+    logging.info("Firm rules: loaded from %s", config.FIRM_RULES_PATH)
+else:
+    logging.warning(
+        "Firm rules: NO local_config.py found (looked for %s). Nothing will be "
+        "hidden or excluded, former staff keep their own names, and the Weekly "
+        "Review covers every client. Copy local_config.example.py to "
+        "local_config.py to match another installation.", config.FIRM_RULES_PATH)
+
 app = Flask(__name__)
 # Random key persisted per-machine (see config.get_or_create_secret_key). There
 # are no logins, but the session cookie still carries the CSRF token, so it must
@@ -977,6 +991,16 @@ def settings():
                            completed_statuses=_completed_statuses(),
                            all_statuses=_known_statuses(),
                            db_path=str(get_store().db_path),
+                           # So anyone comparing this copy with another can see at
+                           # a glance whether the firm rules are in effect.
+                           firm_rules={
+                               "loaded": config.FIRM_RULES_LOADED,
+                               "path": config.FIRM_RULES_PATH,
+                               "hidden_assignee": config.HIDDEN_ITEM_ASSIGNEE,
+                               "excluded_clients": len(config.EXCLUDED_CLIENT_NAMES),
+                               "former_staff": len(config.UNASSIGNED_STAFF_NAMES),
+                               "review_scope": review.scope_clients_label(),
+                           },
                            msg=request.args.get("msg", ""),
                            msg_type=request.args.get("mt", "ok"))
 
