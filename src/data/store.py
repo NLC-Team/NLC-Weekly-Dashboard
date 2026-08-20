@@ -20,7 +20,6 @@ sets it to 1; work is removed by a hard delete instead (see delete_project).
 from __future__ import annotations
 
 import json
-import secrets
 import sqlite3
 import threading
 from datetime import date, timedelta
@@ -87,17 +86,15 @@ CREATE TABLE IF NOT EXISTS handoffs (
     to_assignee   TEXT,
     handed_at     TEXT
 );
--- Staff directory + login accounts: names, access roles, and credentials.
--- username is the unique login handle; password_hash is a Werkzeug hash;
--- status is 'active' (can log in) or 'pending' (awaiting admin approval).
+-- The firm's staff roster: names plus a role label. The dashboard has no
+-- sign-in, so `role` gates nothing — it just records who does what.
+-- Databases created before the login system was removed also carry unused
+-- credential columns (username, password_hash, email, ...); nothing reads them.
 CREATE TABLE IF NOT EXISTS staff (
     name          TEXT PRIMARY KEY,
     role          TEXT DEFAULT 'Viewer',
     added_at      TEXT,
-    username      TEXT,
-    password_hash TEXT,
-    status        TEXT DEFAULT 'active',
-    email         TEXT
+    status        TEXT DEFAULT 'active'
 );
 -- The dashboard reads active items on every page load via
 -- "WHERE resolved=0"; index it so that stays fast as resolved history grows.
@@ -132,13 +129,10 @@ _MIGRATIONS = {
     "items": [("project_key", "TEXT"), ("return_type_raw", "TEXT"),
               ("client_owner", "TEXT"), ("due_date", "TEXT"),
               ("completed_date", "TEXT")],
-    "staff": [("username", "TEXT"), ("password_hash", "TEXT"),
-              ("status", "TEXT DEFAULT 'active'"), ("email", "TEXT"),
-              ("email_verified", "INTEGER DEFAULT 0"),
-              ("verify_code", "TEXT"), ("verify_sent_at", "TEXT"),
-              # Bumped whenever credentials change; sessions carry the value
-              # they were issued with and die when it no longer matches.
-              ("session_rev", "INTEGER DEFAULT 0")],
+    # get_staff() filters on `status`, so a database predating that column
+    # needs it added. The old credential columns are deliberately NOT listed:
+    # nothing reads them any more, so new databases simply never grow them.
+    "staff": [("status", "TEXT DEFAULT 'active'")],
     # 'manual' (set via the Done/Open button) or 'import' (set by the import
     # auto-complete sync). Lets the sync leave human decisions alone. See
     # apply_import_completion / set_project_completed.
@@ -217,27 +211,9 @@ class Store:
         """Add any columns introduced after a database was first created."""
         for table, cols in _MIGRATIONS.items():
             existing = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
-            newly_added = []
             for name, decl in cols:
                 if name not in existing:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
-                    newly_added.append(name)
-            # When email verification is first introduced, accounts that already
-            # existed were already trusted — treat their email as verified so the
-            # switch to email login doesn't lock anyone out.
-            if table == "staff" and "email_verified" in newly_added:
-                self.conn.execute("UPDATE staff SET email_verified=1")
-        # Login handles must be unique. Created here (not in SCHEMA) so they run
-        # after the columns are guaranteed to exist on older databases.
-        # Partial indexes: legacy rows with NULL username/email don't collide.
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_username "
-            "ON staff(username) WHERE username IS NOT NULL"
-        )
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_email "
-            "ON staff(email) WHERE email IS NOT NULL"
-        )
 
     def close(self):
         c = getattr(self._local, "conn", None)
@@ -697,21 +673,19 @@ class Store:
                                 "to_assignee": r["to_assignee"],
                                 "handed_at": r["handed_at"]} for r in rows}
 
-    # ---- staff directory + login accounts ------------------------------
+    # ---- staff directory -------------------------------------------------
     def get_staff(self) -> list[dict]:
-        """All active staff (the directory). Excludes pending sign-ups."""
+        """The firm's roster: every name on the staff list with its role label.
+
+        A role is a label only — the dashboard has no sign-in and does not gate
+        anything on it. Rows left at status='pending' by the removed sign-up flow
+        are skipped, so an old database doesn't surface half-finished requests.
+        """
         rows = self.conn.execute(
-            "SELECT name, role, username, email, status, password_hash, "
-            "COALESCE(email_verified,0) AS email_verified FROM staff "
+            "SELECT name, role FROM staff "
             "WHERE status='active' OR status IS NULL ORDER BY name"
         ).fetchall()
-        return [
-            {"name": r["name"], "role": r["role"], "username": r["username"],
-             "email": r["email"], "status": r["status"] or "active",
-             "email_verified": bool(r["email_verified"]),
-             "has_login": bool(r["password_hash"])}
-            for r in rows
-        ]
+        return [{"name": r["name"], "role": r["role"] or "Viewer"} for r in rows]
 
     def upsert_staff(self, name: str, role: str, today: date | None = None) -> None:
         added = today.isoformat() if today else None
@@ -725,137 +699,6 @@ class Store:
     def remove_staff(self, name: str) -> None:
         self.conn.execute("DELETE FROM staff WHERE name=?", (name,))
         self.conn.commit()
-
-    # ---- login accounts -------------------------------------------------
-    # Accounts are managed by `name` (the primary key) and authenticated by
-    # `email` (the login handle; `username` remains as a legacy fallback).
-    _ACCOUNT_COLS = ("name, role, username, email, status, password_hash, "
-                     "COALESCE(email_verified,0) AS email_verified, verify_code, verify_sent_at, "
-                     "COALESCE(session_rev,0) AS session_rev")
-
-    @staticmethod
-    def _account(r) -> dict | None:
-        if not r:
-            return None
-        return {
-            "name": r["name"], "role": r["role"], "username": r["username"],
-            "email": r["email"], "status": r["status"] or "active",
-            "password_hash": r["password_hash"],
-            "email_verified": bool(r["email_verified"]),
-            "verify_code": r["verify_code"], "verify_sent_at": r["verify_sent_at"],
-            "session_rev": r["session_rev"],
-            "has_login": bool(r["password_hash"]),
-        }
-
-    def get_account_by_name(self, name: str) -> dict | None:
-        if not name:
-            return None
-        return self._account(self.conn.execute(
-            f"SELECT {self._ACCOUNT_COLS} FROM staff WHERE name=?", (name,)).fetchone())
-
-    def get_account_by_email(self, email: str) -> dict | None:
-        if not email:
-            return None
-        return self._account(self.conn.execute(
-            f"SELECT {self._ACCOUNT_COLS} FROM staff WHERE email=? COLLATE NOCASE",
-            (email,)).fetchone())
-
-    def get_account_by_username(self, username: str) -> dict | None:
-        if not username:
-            return None
-        return self._account(self.conn.execute(
-            f"SELECT {self._ACCOUNT_COLS} FROM staff WHERE username=? COLLATE NOCASE",
-            (username,)).fetchone())
-
-    def get_account_by_login(self, login: str) -> dict | None:
-        """Authenticate lookup: email first, then username (legacy fallback)."""
-        if not login:
-            return None
-        acct = self.get_account_by_email(login)
-        if acct:
-            return acct
-        return self._account(self.conn.execute(
-            f"SELECT {self._ACCOUNT_COLS} FROM staff WHERE username=?", (login,)).fetchone())
-
-    def create_account(self, name: str, role: str, password_hash: str, status: str, *,
-                       email: str | None = None, username: str | None = None,
-                       email_verified: int = 0, verify_code: str | None = None,
-                       verify_sent_at: str | None = None, today: date | None = None) -> None:
-        """Create a login account. Raises sqlite3.IntegrityError if the display
-        name (primary key), username or email is already in use.
-
-        The account starts with a RANDOM session_rev, not 0. Sessions authenticate
-        on (name, session_rev); if a deleted staff member is later re-created with
-        the same name, a fresh random rev guarantees their old pre-deletion cookie
-        can't match the new account and silently log them back in — they must sign
-        in again. (A deleted row's rev is gone, so we can't just increment it.)"""
-        self.conn.execute(
-            "INSERT INTO staff(name, role, added_at, username, email, password_hash, "
-            "status, email_verified, verify_code, verify_sent_at, session_rev) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (name, role, today.isoformat() if today else None, username, email,
-             password_hash, status, 1 if email_verified else 0, verify_code, verify_sent_at,
-             secrets.randbelow(2_000_000_000)),
-        )
-        self.conn.commit()
-
-    def set_login(self, name: str, email: str, password_hash: str) -> None:
-        """Set a member's email login + password and activate them (admin action
-        for legacy rows / resets). Marks the email verified since an admin set it.
-        Bumps session_rev so any sessions issued under the old credentials die."""
-        self.conn.execute(
-            "UPDATE staff SET email=?, password_hash=?, status='active', email_verified=1, "
-            "session_rev=COALESCE(session_rev,0)+1 WHERE name=?",
-            (email, password_hash, name),
-        )
-        self.conn.commit()
-
-    def set_password(self, name: str, password_hash: str) -> None:
-        """Change a password. Bumps session_rev: every existing session for the
-        account is invalidated (the caller re-stamps its own session to stay in)."""
-        self.conn.execute(
-            "UPDATE staff SET password_hash=?, session_rev=COALESCE(session_rev,0)+1 "
-            "WHERE name=?", (password_hash, name))
-        self.conn.commit()
-
-    def set_email(self, name: str, email: str) -> None:
-        """Set/replace a logged-in user's own email (treated as verified)."""
-        self.conn.execute(
-            "UPDATE staff SET email=?, email_verified=1 WHERE name=?", (email, name))
-        self.conn.commit()
-
-    def set_verify_code(self, name: str, code: str, sent_at: str) -> None:
-        self.conn.execute(
-            "UPDATE staff SET verify_code=?, verify_sent_at=? WHERE name=?",
-            (code, sent_at, name))
-        self.conn.commit()
-
-    def mark_email_verified(self, name: str) -> None:
-        self.conn.execute(
-            "UPDATE staff SET email_verified=1, verify_code=NULL WHERE name=?", (name,))
-        self.conn.commit()
-
-    def approve_account(self, name: str, role: str) -> None:
-        self.conn.execute(
-            "UPDATE staff SET status='active', role=? WHERE name=?", (role, name))
-        self.conn.commit()
-
-    def list_pending(self) -> list[dict]:
-        rows = self.conn.execute(
-            "SELECT name, role, username, email, COALESCE(email_verified,0) AS email_verified "
-            "FROM staff WHERE status='pending' ORDER BY added_at"
-        ).fetchall()
-        return [{"name": r["name"], "role": r["role"], "username": r["username"],
-                 "email": r["email"], "email_verified": bool(r["email_verified"])}
-                for r in rows]
-
-    def count_active_admins(self) -> int:
-        """Admins who can actually sign in (active + have a password)."""
-        r = self.conn.execute(
-            "SELECT COUNT(*) FROM staff WHERE role='Admin' AND status='active' "
-            "AND password_hash IS NOT NULL AND password_hash != ''"
-        ).fetchone()
-        return r[0]
 
     # ---- audit trail ------------------------------------------------------
     def log_event(self, ts: str, actor: str, ip: str, action: str, detail: str = "") -> None:

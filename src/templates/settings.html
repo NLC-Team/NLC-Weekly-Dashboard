@@ -49,66 +49,6 @@
   {% endif %}
 </div>
 
-<!-- Email notifications (optional SMTP) -->
-<div class="card mb-2">
-  <div class="card-title">Email notifications <span class="text-muted" style="font-weight:400;font-size:13px">(optional)</span></div>
-  <p class="text-muted mb-1" style="font-size:12px">
-    Sign-in doesn't use email — everyone signs in with their email address and password. This section
-    is only for one optional convenience: <strong>emailing admins when someone requests access</strong>,
-    so you get a heads-up without checking the dashboard.
-  </p>
-  <p class="text-muted mb-1" style="font-size:12px">
-    You don't need this to run the app. New access requests always show up in
-    <a href="{{ url_for('staff') }}" style="color:var(--accent)">Staff &amp; Roles</a> with a red badge,
-    whether or not email is set up.
-  </p>
-  <p class="text-muted mb-1" style="font-size:12px">
-    Status:
-    {% if mail.configured %}<span class="text-ok" style="font-weight:700">set up</span>
-    {% else %}<span style="font-weight:700;color:var(--warn)">not set up</span>
-      — that's fine; you'll still see requests in Staff &amp; Roles.{% endif %}
-  </p>
-  <p class="text-muted mb-1" style="font-size:11.5px;background:var(--bg);border-radius:8px;padding:9px 11px">
-    If you do want the email alerts, two ways to connect (needs your Microsoft 365 admin's help — this
-    firm's tenant currently blocks both by default):<br>
-    • <strong>Direct send (no login):</strong> leave Username &amp; Password blank. Host
-      <span class="monospace">nlcfcpa-com.mail.protection.outlook.com</span>, port <strong>25</strong>,
-      STARTTLS off. Requires your server's IP to be an allowed sender.<br>
-    • <strong>Signed-in:</strong> Username = a full mailbox address (e.g.
-      <span class="monospace">serviceaccount@nlcfcpa.com</span>) + its password or app password. Host
-      <span class="monospace">smtp.office365.com</span>, port 587. Requires Authenticated SMTP enabled on the mailbox.
-  </p>
-  <form method="post" action="{{ url_for('settings_mail') }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="map-grid mb-2" style="grid-template-columns:170px 1fr;max-width:560px">
-      <label style="margin:0">SMTP host</label>
-      <input type="text" name="host" value="{{ mail.host }}">
-      <label style="margin:0">Port</label>
-      <input type="number" name="port" value="{{ mail.port }}" style="width:110px">
-      <label style="margin:0">From address</label>
-      <input type="text" name="sender" value="{{ mail.sender }}" placeholder="dashboard@nlcfcpa.com">
-      <label style="margin:0">Username <span class="text-muted" style="font-weight:400">(optional)</span></label>
-      <input type="text" name="username" value="{{ mail.username }}" placeholder="blank = send without signing in">
-      <label style="margin:0">Password <span class="text-muted" style="font-weight:400">(optional)</span></label>
-      <input type="password" name="password" autocomplete="new-password"
-             placeholder="{{ '•••••• saved — leave blank to keep' if mail.has_password else 'blank = no login needed' }}">
-      <label style="margin:0">Use STARTTLS</label>
-      <div><input type="checkbox" name="use_tls" {{ 'checked' if mail.use_tls }}
-                  style="width:16px;height:16px;accent-color:var(--accent)"></div>
-    </div>
-    <button type="submit" class="btn btn-primary btn-sm">Save mail settings</button>
-  </form>
-
-  <form method="post" action="{{ url_for('settings_mail_test') }}" class="row mt-2" style="gap:8px;align-items:flex-end">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div>
-      <label>Send a test email to</label>
-      <input type="text" name="to" value="{{ my_email }}" placeholder="you@nlcfcpa.com" style="width:230px">
-    </div>
-    <button type="submit" class="btn btn-secondary btn-sm">Send test</button>
-  </form>
-</div>
-
 <!-- Column mapping note -->
 <div class="card mb-2">
   <div class="card-title">Column mapping</div>

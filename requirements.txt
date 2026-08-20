@@ -1,12 +1,11 @@
-# Runtime dependencies
-pandas
-matplotlib
-flask
-waitress       # production WSGI server for the web dashboard
-openpyxl       # read .xlsx / .xls Excel imports
-cryptography   # at-rest encryption of the stored SMTP password (src/vault.py)
+# Runtime dependencies — all four are required to start the dashboard.
+flask          # the web app itself
+waitress       # production WSGI server the app serves through
+pandas         # CSV / Excel parsing for the import wizard
+matplotlib     # renders the overview charts as PNGs
+openpyxl       # read .xlsx / .xls Excel imports, write the review workbook
 
-# Build-only (for producing the standalone .exe)
+# Build-only (only needed to rebuild the legacy desktop .exe from build.spec)
 pyinstaller
 
 # Test-only

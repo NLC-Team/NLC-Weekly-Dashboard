@@ -6,10 +6,7 @@ upload"). Root causes: (1) no file selected -> silent redirect, no message;
 session wipe back to step 0, no message; (3) an exception during the actual
 import -> unhandled, blank error page, nothing logged anywhere (pythonw.exe
 has no console). All three now show a clear on-page message instead."""
-from datetime import date
-
 import pytest
-from werkzeug.security import generate_password_hash
 
 import config
 import webapp
@@ -19,10 +16,6 @@ from data.store import Store
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     store = Store(tmp_path / "test.db")
-    # A staff-directory row alone isn't enough to pass the app's setup gate --
-    # it specifically requires an admin who can log in (has a password hash).
-    store.create_account("Admin", "Admin", generate_password_hash("x"), "active",
-                         today=date(2026, 7, 27))
     monkeypatch.setattr(webapp, "_store", store)
     # Route uploads to an isolated temp dir instead of the real app-data one.
     upload_dir = tmp_path / "import_uploads"
@@ -30,10 +23,9 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "default_import_upload_dir", lambda: upload_dir)
     webapp.app.testing = True
     with webapp.app.test_client() as c:
-        acct = store.get_account_by_name("Admin")
+        # There is no login, but POSTs still have to carry the CSRF token the
+        # session holds (see webapp._csrf_gate).
         with c.session_transaction() as sess:
-            sess["auth_user"] = "Admin"
-            sess["rev"] = acct["session_rev"]
             sess["csrf_token"] = "test-token"
         yield c
     store.close()

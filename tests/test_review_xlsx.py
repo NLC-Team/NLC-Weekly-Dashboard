@@ -9,7 +9,6 @@ from datetime import date, datetime
 
 import pytest
 from openpyxl import load_workbook
-from werkzeug.security import generate_password_hash
 
 import review_xlsx
 import webapp
@@ -310,15 +309,10 @@ def test_blank_assignee_name_still_gets_a_usable_sheet():
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     store = Store(tmp_path / "test.db")
-    store.create_account("Admin", "Admin", generate_password_hash("x"), "active",
-                         today=date(2026, 7, 30))
     monkeypatch.setattr(webapp, "_store", store)
     webapp.app.testing = True
     with webapp.app.test_client() as c:
-        acct = store.get_account_by_name("Admin")
         with c.session_transaction() as sess:
-            sess["auth_user"] = "Admin"
-            sess["rev"] = acct["session_rev"]
             sess["csrf_token"] = "test-token"
         yield c
     store.close()
@@ -337,11 +331,14 @@ def test_route_serves_a_downloadable_workbook(client):
     assert load_workbook(io.BytesIO(r.data)).sheetnames
 
 
-def test_route_requires_a_signed_in_admin(client):
+def test_route_needs_no_session(client):
+    """The dashboard has no sign-in: a visitor with an empty session still gets
+    the workbook. This replaces an older test that asserted the opposite, back
+    when the route sat behind an admin login."""
     # Same monkeypatched temp store as the fixture -- an un-patched app would build
     # (and write to) the REAL app-data database just to answer this request.
     with client.session_transaction() as sess:
         sess.clear()
     r = client.get("/review.xlsx")
-    assert r.status_code in (302, 401, 403)
-    assert r.mimetype != webapp.XLSX_MIMETYPE
+    assert r.status_code == 200
+    assert r.mimetype == webapp.XLSX_MIMETYPE

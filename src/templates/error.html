@@ -1,9 +1,9 @@
-{% extends "auth_base.html" %}
+{% extends "standalone.html" %}
 {% block title %}{{ code }} — NLC Dashboard{% endblock %}
-{% block auth %}
+{% block standalone %}
 <h1>{{ title }}</h1>
 <p class="sub">{{ message }}</p>
-<div class="auth-foot">
+<div class="page-foot">
   <a href="{{ url_for('overview') }}">Back to dashboard</a>
 </div>
 {% endblock %}

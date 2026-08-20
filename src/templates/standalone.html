@@ -12,14 +12,13 @@
 <meta name="apple-mobile-web-app-title" content="NLC Dashboard">
 <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 <style>
-/* Sign-in shell. Mirrors the dashboard's letterhead identity (see app.css):
-   Georgia titles, the firm navy, a faintly warm "paper" field, and the
-   letterhead double rule (navy over green) beneath the mark. Fonts are system
-   faces (Georgia / Segoe UI) so this works offline and under font-src 'self'. */
+/* Standalone page shell — a centred card with no sidebar, used by the error
+   pages. Mirrors the dashboard's letterhead identity (see app.css): Georgia
+   titles, the firm navy, a faintly warm "paper" field, and the letterhead
+   double rule (navy over green) beneath the mark. Fonts are system faces
+   (Georgia / Segoe UI) so this works offline and under font-src 'self'. */
 :root{
   --navy:#1a3f8f;--green:#4a9d4f;--text:#16202e;--muted:#55606f;--border:#e4ddd0;
-  --danger:#b91c1c;--danger-bg:#fdeeee;--danger-border:#f2b8b8;
-  --ok:#15803d;--ok-bg:#f0fdf4;--ok-border:#9ae6b0;--accent:#1a3f8f;
   --serif:Georgia,'Times New Roman',serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -27,39 +26,25 @@ body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
   background:radial-gradient(1200px 600px at 50% -10%, #fbf9f4, #efe9dd);
   color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
   -webkit-font-smoothing:antialiased}
-.auth-card{background:#fff;border:1px solid var(--border);border-radius:16px;
+.page-card{background:#fff;border:1px solid var(--border);border-radius:16px;
   box-shadow:0 1px 2px rgba(20,41,79,.06),0 18px 50px rgba(20,41,79,.14);
   width:100%;max-width:404px;padding:32px 32px 26px}
-.auth-logo{display:flex;justify-content:center;margin-bottom:14px}
-.auth-logo svg{display:block}
+.page-logo{display:flex;justify-content:center;margin-bottom:14px}
+.page-logo svg{display:block}
 /* The signature double rule, echoing the letterhead frame. */
-.auth-rule{height:2px;background:var(--navy);position:relative;margin:0 auto 18px;width:56px;border-radius:2px}
-.auth-rule::after{content:"";position:absolute;left:0;right:0;bottom:-4px;height:1.5px;background:var(--green)}
+.page-rule{height:2px;background:var(--navy);position:relative;margin:0 auto 18px;width:56px;border-radius:2px}
+.page-rule::after{content:"";position:absolute;left:0;right:0;bottom:-4px;height:1.5px;background:var(--green)}
 h1{font-family:var(--serif);font-size:23px;font-weight:700;text-align:center;
   letter-spacing:-.01em;margin-bottom:5px}
 .sub{font-size:12.5px;color:var(--muted);text-align:center;margin-bottom:22px;line-height:1.5}
-label{display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;
-  letter-spacing:.05em;margin:0 0 5px}
-input[type=text],input[type=password],input[type=email]{width:100%;padding:10px 12px;border:1px solid var(--border);
-  border-radius:9px;font-size:14px;font-family:inherit;margin-bottom:15px;background:#fff;color:var(--text);
-  transition:border-color .12s,box-shadow .12s}
-input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(26,63,143,.14)}
-.btn{width:100%;padding:12px;border:none;border-radius:9px;background:var(--navy);color:#fff;
-  font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;transition:background .12s}
-.btn:hover{background:#163475}
-.btn:focus-visible{outline:2px solid var(--navy);outline-offset:2px}
-.msg{padding:10px 13px;border-radius:9px;font-size:12.5px;font-weight:600;margin-bottom:16px}
-.msg-err{background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger-border)}
-.msg-ok{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-border)}
-.auth-foot{text-align:center;font-size:12.5px;color:var(--muted);margin-top:18px}
-.auth-foot a{color:var(--navy);text-decoration:none;font-weight:600}
-.auth-foot a:hover{text-decoration:underline}
-.hint{font-size:11px;color:var(--muted);margin:-9px 0 15px}
+.page-foot{text-align:center;font-size:12.5px;color:var(--muted);margin-top:18px}
+.page-foot a{color:var(--navy);text-decoration:none;font-weight:600}
+.page-foot a:hover{text-decoration:underline}
 </style>
 </head>
 <body>
-  <div class="auth-card">
-    <div class="auth-logo">
+  <div class="page-card">
+    <div class="page-logo">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 62" width="150" height="55" role="img" aria-label="NLC">
         <rect x="1.5" y="1.5" width="165" height="59" fill="#ffffff" stroke="#1a3f8f" stroke-width="2" rx="3"/>
         <rect x="6" y="6" width="156" height="50" fill="none" stroke="#4a9d4f" stroke-width="1" rx="2"/>
@@ -69,8 +54,8 @@ input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(26,6
         </text>
       </svg>
     </div>
-    <div class="auth-rule"></div>
-    {% block auth %}{% endblock %}
+    <div class="page-rule"></div>
+    {% block standalone %}{% endblock %}
   </div>
 <script nonce="{{ csp_nonce }}">
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {

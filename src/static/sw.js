@@ -32,7 +32,7 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.method !== 'GET') return; // never touch POSTs (imports, edits, login)
+  if (req.method !== 'GET') return; // never touch POSTs (imports, edits, deletes)
 
   const url = new URL(req.url);
   const isStaticAsset =

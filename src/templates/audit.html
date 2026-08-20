@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Audit log <span class="text-muted" style="font-size:14px;font-weight:600">· this week ({{ this_week }})</span></h1>
-<p class="subtitle">Security trail: sign-ins and failures, account and credential changes,
-imports, deletions, and settings edits. Newest first. The live log keeps only the
+<p class="subtitle">A trail of every change: imports, deletions, staff edits and settings
+changes, with the machine that made them. Newest first. The live log keeps only the
 current week; older events roll into the weekly <strong>archive</strong> below.</p>
 
 <div class="card mb-2">
   <div class="card-title">Archived weeks</div>
   {% if weeks %}
   <p class="text-muted" style="font-size:12px;margin-bottom:14px">
-    Past weeks are preserved here (admin-only) and never deleted. Week 1 is the
+    Past weeks are preserved here and never deleted. Week 1 is the
     earliest on record; each card counts one week forward. Click a week to view it.</p>
   <div class="weeks-grid">
     {% for w in weeks %}
@@ -46,6 +46,9 @@ current week; older events roll into the weekly <strong>archive</strong> below.<
           <td style="font-weight:600">{{ e.actor or '—' }}</td>
           <td class="monospace">{{ e.ip or '—' }}</td>
           <td>
+            {# The sign-in actions can't be produced any more (there is no login),
+               but databases from before it was removed still hold rows with them,
+               so they keep their colours here. #}
             <span class="badge {{ 'badge-overdue' if e.action in ('login_failed','signup_rejected')
                                   else ('badge-manager' if e.action in ('login','logout')
                                   else 'badge-open') }}">{{ e.action }}</span>
@@ -58,7 +61,7 @@ current week; older events roll into the weekly <strong>archive</strong> below.<
   </div>
   {% else %}
   <p class="text-muted" style="font-size:12px">Nothing recorded yet. Events appear here as
-  people sign in, accounts change, and data is imported or deleted.</p>
+  data is imported, edited or deleted.</p>
   {% endif %}
 </div>
 {% endblock %}

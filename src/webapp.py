@@ -20,7 +20,6 @@ import threading
 import time
 import webbrowser
 from datetime import date, datetime, timedelta
-from functools import wraps
 from pathlib import Path
 
 logging.basicConfig(
@@ -41,14 +40,10 @@ matplotlib.rcParams["font.family"] = ["Times New Roman", "serif"]
 from flask import (Flask, Response, abort, g, redirect, render_template, request,
                    send_from_directory, session, url_for)
 from matplotlib.figure import Figure
-from werkzeug.security import check_password_hash, generate_password_hash
 
-import cloudflare_hardening
 import config
-import mailer
 import review_pdf
 import review_xlsx
-import vault
 from data import analytics, importer, review, service
 from data.store import Store
 
@@ -62,14 +57,13 @@ _log_file_handler.setFormatter(logging.Formatter(
 logging.getLogger().addHandler(_log_file_handler)
 
 app = Flask(__name__)
-# Random key persisted per-machine (see config.get_or_create_secret_key). This
-# replaces the old hardcoded key, which made session cookies forgeable.
+# Random key persisted per-machine (see config.get_or_create_secret_key). There
+# are no logins, but the session cookie still carries the CSRF token, so it must
+# be signed with a key that isn't guessable.
 app.secret_key = config.get_or_create_secret_key()
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,      # JS can't read the session cookie
     SESSION_COOKIE_SAMESITE="Lax",     # mitigates cross-site request abuse
-    # "Remember me" makes the session permanent for this long; without it the
-    # cookie is a browser-session cookie that clears when the browser closes.
     PERMANENT_SESSION_LIFETIME=timedelta(days=7),
     # Largest accepted request body. The only big uploads are import CSVs/Excels
     # (a full Karbon export is a few MB); anything bigger gets a clean 413
@@ -81,9 +75,6 @@ app.config.update(
     TEMPLATES_AUTO_RELOAD=True,
 )
 app.jinja_env.auto_reload = True
-# Secure cookie + trusted forwarded headers when (and only when) the
-# NLC_BEHIND_CLOUDFLARE env var says we're behind the Cloudflare tunnel.
-cloudflare_hardening.apply(app)
 
 # ---- Global singleton store (single-user local app) ----------------------
 _store: Store | None = None
@@ -114,48 +105,20 @@ def _completed_statuses() -> list:
     return list(get_store().get_setting("completed_statuses", []))
 
 
-# ---- Identity (driven by the logged-in session user) ---------------------
-
-def _current_account() -> dict | None:
-    """The logged-in account row, or None. Cached per request on flask.g.
-    Session stores the account's display name (its stable primary key) plus the
-    session_rev the login was issued under; a password change/reset bumps the
-    account's rev, which kills every session carrying the old value."""
-    if not hasattr(g, "_account"):
-        name = session.get("auth_user", "")
-        acct = get_store().get_account_by_name(name) if name else None
-        # Only a fully-active account with a still-current session counts.
-        ok = (acct and acct["status"] == "active"
-              and session.get("rev") == acct["session_rev"])
-        g._account = acct if ok else None
-    return g._account
-
+# ---- Identity -------------------------------------------------------------
+# There is no sign-in. The dashboard is served on the firm's internal network
+# and every visitor gets the whole dashboard, so there is no per-visitor
+# identity to record. The audit trail logs the requesting machine's IP, which is
+# the only thing we can actually know about who did something.
 
 def _client_ip() -> str:
-    """The visitor's IP for throttling/audit. Forwarded headers are only
-    trusted when we really are behind Cloudflare (they're spoofable otherwise)."""
-    if cloudflare_hardening.enabled():
-        return cloudflare_hardening.real_client_ip(request)
+    """The requesting machine's IP, as recorded in the audit trail.
+
+    Read straight from the socket. Forwarded headers (X-Forwarded-For and
+    friends) are deliberately NOT trusted: nothing proxies this app, so anyone
+    on the LAN could set them and write whatever they liked into the audit log.
+    """
     return request.remote_addr or ""
-
-
-def _current_user() -> str:
-    """Logged-in display name ("" if none)."""
-    return session.get("auth_user", "") or ""
-
-
-def _current_role() -> str:
-    acct = _current_account()
-    return acct["role"] if acct else ""
-
-
-def _is_admin() -> bool:
-    return _current_role() == "Admin"
-
-
-def _needs_setup() -> bool:
-    """True on first run: no admin who can actually log in exists yet."""
-    return get_store().count_active_admins() == 0
 
 
 # ---- CSRF -----------------------------------------------------------------
@@ -179,140 +142,15 @@ def _csp_nonce() -> str:
     return g._csp_nonce
 
 
-# ---- Abuse throttle (in-memory, bounded) -----------------------------------
-# Keys are (kind, identifier) — e.g. ("login-email", <email>) or
-# ("login-ip", <ip>) — so a password spray is stopped per-account AND per-IP.
-# The map is hard-capped: unauthenticated bots posting random identifiers can't
-# grow it without bound (that was a memory-exhaustion vector).
-
-_THROTTLE: dict[tuple[str, str], list[float]] = {}
-_THROTTLE_LOCK = threading.Lock()
-_FAIL_WINDOW = 900  # seconds (15 min)
-_THROTTLE_MAX_KEYS = 5000
-
-_MAX_FAILS_EMAIL = 5    # per email in the window
-_MAX_FAILS_IP = 20      # per source IP in the window (covers many emails)
-_MAX_SIGNUP_IP = 5      # self-service sign-ups per source IP in the window
-
-
-def _throttled(kind: str, ident: str, limit: int) -> bool:
-    """True if `ident` has hit `limit` recorded events inside the window."""
-    if not ident:
-        return False
-    now = time.time()
-    with _THROTTLE_LOCK:
-        recent = [t for t in _THROTTLE.get((kind, ident), []) if now - t < _FAIL_WINDOW]
-        if recent:
-            _THROTTLE[(kind, ident)] = recent
-        else:
-            _THROTTLE.pop((kind, ident), None)
-        return len(recent) >= limit
-
-
-def _throttle_hit(kind: str, ident: str) -> None:
-    if not ident:
-        return
-    now = time.time()
-    with _THROTTLE_LOCK:
-        _THROTTLE.setdefault((kind, ident), []).append(now)
-        if len(_THROTTLE) > _THROTTLE_MAX_KEYS:
-            # Drop everything outside the window first; if a flood of *active*
-            # keys still exceeds the cap, evict oldest-inserted (dict order).
-            for k in [k for k, v in _THROTTLE.items() if not v or now - v[-1] >= _FAIL_WINDOW]:
-                del _THROTTLE[k]
-            while len(_THROTTLE) > _THROTTLE_MAX_KEYS:
-                _THROTTLE.pop(next(iter(_THROTTLE)))
-
-
-def _throttle_clear(kind: str, ident: str) -> None:
-    with _THROTTLE_LOCK:
-        _THROTTLE.pop((kind, ident), None)
-
-
-# ---- Password helpers -----------------------------------------------------
-
-# Minimum length for any NEW or CHANGED password. Raised from 8 to 12 as cheap
-# defence-in-depth: this app is a candidate for internet exposure (Cloudflare),
-# where an 8-char floor is too weak against credential stuffing. Existing shorter
-# passwords still work at login — the floor only applies when a password is set.
-_MIN_PW_LEN = 12
-
-
-def _valid_password(pw) -> bool:
-    return isinstance(pw, str) and len(pw) >= _MIN_PW_LEN
-
-
-def _hash_password(pw: str) -> str:
-    # pbkdf2:sha256 is available on every CPython build; scrypt (the Werkzeug
-    # default) can be absent, and account hashes are shared across machines.
-    return generate_password_hash(pw, method="pbkdf2:sha256")
-
-
-# A throwaway hash to verify against when no account matches the email. Checking
-# it burns the same ~pbkdf2 time a real check would, so a wrong email and a wrong
-# password take equally long — a timing attacker can't tell which emails exist.
-_DUMMY_PW_HASH = _hash_password(secrets.token_hex(16))
-
-
-def _mail_config() -> dict:
-    cfg = mailer.merged_config(get_store().get_setting("mail_config", {}))
-    # The stored password is encrypted at rest (see vault.py); hand callers the
-    # usable plaintext. Legacy plaintext values pass through unchanged.
-    if cfg.get("password"):
-        cfg["password"] = vault.decrypt(cfg["password"])
-    return cfg
-
+# ---- Audit trail ----------------------------------------------------------
 
 def _audit(action: str, detail: str = "", actor: str | None = None) -> None:
-    """Append to the security audit trail (who, from where, what)."""
+    """Append to the audit trail (from where, what). With no sign-in there is no
+    user name to record, so the IP column carries the "who"."""
     get_store().log_event(
         datetime.now().isoformat(timespec="seconds"),
-        actor if actor is not None else _current_user(),
+        actor or "",
         _client_ip(), action, detail)
-
-
-def _send_verify_code(name: str, email: str) -> bool:
-    """Generate + store a fresh 6-digit code and email it to the address the
-    sign-up claims to own. Returns False when the mail couldn't be sent (e.g.
-    SMTP not configured yet) — the request still exists, just unverified."""
-    code = f"{secrets.randbelow(1_000_000):06d}"
-    get_store().set_verify_code(name, code, datetime.now().isoformat(timespec="seconds"))
-    ok, err = mailer.send_verify_code(_mail_config(), email, code)
-    if not ok:
-        logging.warning("Could not send verification code to %s: %s", email, err)
-    return ok
-
-
-def _pending_count() -> int:
-    """How many sign-up requests are awaiting an admin's approval."""
-    return len(get_store().list_pending())
-
-
-def _admin_emails() -> list[str]:
-    """Sign-in emails of every active admin (for access-request notifications)."""
-    return [m["email"] for m in get_store().get_staff()
-            if m["role"] == "Admin" and m["email"]]
-
-
-def _notify_admins_of_signup(name: str, email: str) -> None:
-    """Email all admins that someone requested access. Best-effort: a mail
-    failure must never block the sign-up (the request still lands in the queue)."""
-    admins = _admin_emails()
-    if not admins:
-        logging.warning("New access request from %s <%s> but no admin email is on file.",
-                        name, email)
-        return
-    ok, err = mailer.send_signup_notification(_mail_config(), ", ".join(admins), name, email)
-    if not ok:
-        logging.warning("Could not notify admins of access request from %s <%s>: %s",
-                        name, email, err)
-
-
-def _safe_next(target: str) -> str:
-    """Only allow same-site relative redirects (block open-redirects)."""
-    if target and target.startswith("/") and not target.startswith("//"):
-        return target
-    return url_for("overview")
 
 
 # ---- Template filters -----------------------------------------------------
@@ -363,22 +201,11 @@ def _audit_span(first_ts, last_ts):
 
 
 @app.context_processor
-def _inject_user():
-    """Make the current user/role, staff list and CSRF token available to
-    every template (all now driven by the logged-in session user)."""
-    acct = _current_account()
-    is_admin = bool(acct and acct["role"] == "Admin")
+def _inject_globals():
+    """Make the per-request security tokens available to every template."""
     return {
-        "current_user": acct["name"] if acct else "",
-        "current_username": acct["username"] if acct else "",
-        "current_role": acct["role"] if acct else "",
-        "all_staff": get_store().get_staff(),
         "csrf_token": _csrf_token(),
         "csp_nonce": _csp_nonce(),
-        "min_pw_len": _MIN_PW_LEN,
-        # Admins are alerted to new sign-up requests in-app (a badge on the Staff
-        # menu + a banner), since outbound email can't be relied on here.
-        "pending_count": _pending_count() if is_admin else 0,
     }
 
 
@@ -464,12 +291,8 @@ def _no_store_dynamic(resp):
     resp.headers.setdefault("Permissions-Policy",
                             "geolocation=(), microphone=(), camera=(), "
                             "payment=(), usb=(), interest-cohort=()")
-    # HSTS only when we're actually served over HTTPS end-to-end (behind the
-    # Cloudflare tunnel). Sending it on plain-HTTP LAN use would wrongly pin
-    # browsers to HTTPS for an origin that has no certificate.
-    if cloudflare_hardening.enabled():
-        resp.headers.setdefault("Strict-Transport-Security",
-                                "max-age=31536000; includeSubDomains")
+    # No HSTS: the dashboard is served over plain HTTP on the LAN, and pinning
+    # browsers to HTTPS for an origin with no certificate would lock them out.
 
     _gzip_response(resp)
     return resp
@@ -507,85 +330,23 @@ def _gzip_response(resp) -> None:
         logging.exception("gzip failed; sending uncompressed")
 
 
-# ---- Access decorators ----------------------------------------------------
-
-def login_required(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if not _current_account():
-            return redirect(url_for("login", next=request.path))
-        return fn(*args, **kwargs)
-    return wrapper
-
-
-def admin_required(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        acct = _current_account()
-        if not acct:
-            return redirect(url_for("login", next=request.path))
-        if acct["role"] != "Admin":
-            abort(403)
-        return fn(*args, **kwargs)
-    return wrapper
-
-
-def manager_required(fn):
-    """Manager or Admin — allowed to change document/project state."""
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        acct = _current_account()
-        if not acct:
-            return redirect(url_for("login", next=request.path))
-        if acct["role"] not in ("Admin", "Manager"):
-            abort(403)
-        return fn(*args, **kwargs)
-    return wrapper
-
-
-# ---- Global request gate: CSRF + authentication ---------------------------
-
-_PUBLIC_ENDPOINTS = {"login", "signup", "verify", "logout", "setup", "static",
-                     "manifest", "service_worker"}
-
+# ---- Global request gate: CSRF -------------------------------------------
+# There is no login gate. Every page is open to anyone who can reach the server,
+# which is why the server must stay on the internal network (see BIND_HOST at the
+# bottom of this file) — the database holds client data.
 
 @app.before_request
-def _auth_gate():
-    ep = request.endpoint
+def _csrf_gate():
+    """Every state-changing POST must carry this session's CSRF token.
 
-    # 1) CSRF: every state-changing POST must carry the session token. Checked
-    #    first so even unauthenticated POSTs (login/signup/setup) are covered.
+    Still needed without logins: it stops another site the user has open from
+    silently POSTing to the dashboard (deleting clients, running an import) just
+    because the user's browser can reach it.
+    """
     if request.method == "POST":
         token = request.form.get("csrf_token", "")
         if not token or token != session.get("csrf_token"):
             abort(400, description="Invalid or missing CSRF token. Reload the page and try again.")
-
-    if ep == "static" or ep is None:
-        return
-
-    # 2) First run: with no admin yet, funnel everyone to the setup screen.
-    if _needs_setup():
-        if ep != "setup":
-            return redirect(url_for("setup"))
-        return
-
-    # 3) Public auth pages need no login. Once an admin exists, setup is closed.
-    if ep in _PUBLIC_ENDPOINTS:
-        if ep == "setup":
-            return redirect(url_for("login"))
-        return
-
-    # 4) Everything else requires a valid, still-existing, active account.
-    if not _current_account():
-        session.pop("auth_user", None)
-        return redirect(url_for("login", next=request.path))
-
-
-@app.errorhandler(403)
-def _forbidden(_e):
-    return render_template("error.html",
-                           code=403, title="Not allowed",
-                           message="Your account doesn't have permission to view that page."), 403
 
 
 @app.errorhandler(400)
@@ -815,7 +576,6 @@ def _workload_chart_cached(overdue_items: list) -> str | None:
 
 
 @app.route("/charts/workload.png")
-@login_required
 def workload_chart_png():
     """The 'Overdue statements by employee' chart as a standalone PNG.
 
@@ -829,273 +589,15 @@ def workload_chart_png():
     if not b64:
         abort(404)  # nobody overdue → no chart (Overview shows the "caught up" note)
     resp = app.response_class(base64.b64decode(b64), mimetype="image/png")
-    # Private (the visitor's browser only, never the shared Cloudflare edge) and
+    # Private (this visitor's browser only, never a shared cache) and
     # version-keyed, so it can be cached hard without ever going stale.
     resp.headers["Cache-Control"] = "private, max-age=86400"
     return resp
 
 
-# ---- Authentication routes -----------------------------------------------
-
-@app.route("/setup", methods=["GET", "POST"])
-def setup():
-    """First-run bootstrap: create the very first Admin. Reachable only while
-    no active admin exists; closed off (redirects to login) afterwards."""
-    if not _needs_setup():
-        return redirect(url_for("login"))
-    error = ""
-    if request.method == "POST":
-        name = request.form.get("name", "").strip()
-        email = request.form.get("email", "").strip().lower()
-        password = request.form.get("password", "")
-        if not name or not email:
-            error = "Please enter your name and email."
-        elif not config.is_allowed_email(email):
-            error = f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address."
-        elif not _valid_password(password):
-            error = f"Password must be at least {_MIN_PW_LEN} characters."
-        elif (owner := get_store().get_account_by_email(email)) and owner["name"] != name:
-            error = "That email is already used by another account."
-        else:
-            try:
-                get_store().create_account(name, "Admin", _hash_password(password), "active",
-                                           email=email, email_verified=1, today=date.today())
-            except sqlite3.IntegrityError:
-                # First-run with a leftover account of the same name (e.g. an
-                # email-less admin from an earlier version). No usable admin
-                # exists yet, so claim that row as this new admin.
-                get_store().set_login(name, email, _hash_password(password))
-                get_store().upsert_staff(name, "Admin", date.today())  # ensure Admin role
-            session.clear()
-            session["auth_user"] = name
-            session["rev"] = (get_store().get_account_by_name(name) or {}).get("session_rev", 0)
-            session.permanent = True
-            _audit("setup", f"first admin created ({email})", actor=name)
-            return redirect(url_for("overview"))
-    return render_template("setup.html", error=error)
-
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    """Sign in with your @company email + the password you chose at sign-up.
-    An account must be approved by an admin before it can sign in."""
-    if _current_account():
-        return redirect(url_for("overview"))
-    email = ""
-    nxt = request.values.get("next", "")
-    error = ""
-
-    if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
-        password = request.form.get("password", "")
-        remember = request.form.get("remember") == "on"
-        ip = _client_ip()
-        if _throttled("login-email", email, _MAX_FAILS_EMAIL) or \
-           _throttled("login-ip", ip, _MAX_FAILS_IP):
-            error = "Too many failed attempts. Please wait a few minutes and try again."
-        else:
-            acct = get_store().get_account_by_email(email)
-            # Always run a hash check — against the real hash if the account
-            # exists, else a dummy — so response time doesn't reveal whether the
-            # email is registered (user-enumeration side-channel).
-            hash_to_check = (acct["password_hash"] if acct and acct["password_hash"]
-                             else _DUMMY_PW_HASH)
-            pw_matches = check_password_hash(hash_to_check, password)
-            pw_ok = bool(acct and acct["password_hash"] and pw_matches)
-            if not pw_ok:
-                _throttle_hit("login-email", email)
-                _throttle_hit("login-ip", ip)
-                _audit("login_failed", email, actor="")
-                error = "Invalid email or password."  # generic: no user enumeration
-            elif acct["status"] != "active":
-                error = "Your account is awaiting administrator approval."
-            else:
-                _throttle_clear("login-email", email)
-                session.clear()  # fresh session on login (prevents fixation)
-                session["auth_user"] = acct["name"]
-                session["rev"] = acct["session_rev"]
-                session.permanent = remember  # Remember me -> 7-day cookie
-                _audit("login", email, actor=acct["name"])
-                return redirect(_safe_next(nxt))
-
-    return render_template("login.html", email=email, next=nxt, error=error)
-
-
-@app.route("/logout", methods=["POST"])
-def logout():
-    # POST-only + CSRF-protected (via the global gate) so a hostile page can't
-    # force-log-out a signed-in user with a stray <img>/link (CSRF).
-    if session.get("auth_user"):
-        _audit("logout", actor=session.get("auth_user", ""))
-    session.clear()
-    return redirect(url_for("login"))
-
-
-@app.route("/signup", methods=["GET", "POST"])
-def signup():
-    """Self sign-up: name + company email + a password you choose creates a
-    PENDING account, then a 6-digit code is emailed to that address to prove
-    the person really controls it (anyone can *type* a company email). Admins
-    are alerted (in-app + best-effort email); once an admin approves it, you
-    can sign in with your email + password."""
-    if _current_account():
-        return redirect(url_for("overview"))
-    error = ""
-    if request.method == "POST":
-        ip = _client_ip()
-        # Rate-limit self-service sign-ups per source IP so an internet-exposed
-        # instance can't be flooded with bogus pending accounts.
-        if _throttled("signup-ip", ip, _MAX_SIGNUP_IP):
-            return render_template("signup.html", done=False,
-                                   error="Too many sign-up requests from your network. "
-                                         "Please wait a few minutes and try again.")
-        name = request.form.get("name", "").strip()
-        email = request.form.get("email", "").strip().lower()
-        password = request.form.get("password", "")
-        confirm = request.form.get("confirm", "")
-        if not name or not email:
-            error = "Please enter your name and email."
-        elif not config.is_allowed_email(email):
-            error = f"Access is limited to @{config.ALLOWED_EMAIL_DOMAIN} email addresses."
-        elif not _valid_password(password):
-            error = f"Password must be at least {_MIN_PW_LEN} characters."
-        elif password != confirm:
-            error = "The two passwords don't match."
-        elif get_store().get_account_by_email(email):
-            error = "An account with that email already exists — try signing in."
-        else:
-            try:
-                get_store().create_account(name, "Viewer", _hash_password(password), "pending",
-                                           email=email, email_verified=0, today=date.today())
-            except sqlite3.IntegrityError:
-                return render_template("signup.html",
-                                       error="That name or email is already in use.")
-            # Count only successful creations toward the per-IP cap.
-            _throttle_hit("signup-ip", ip)
-            _audit("signup", f"access request for {email}", actor=name)
-            # Notifications are best-effort and must NOT block sign-up: outbound
-            # SMTP (M365) is unreachable here, and a synchronous send would hang
-            # the request ~20s per email (see mailer's socket timeout). Fire them
-            # off-thread and show the "pending admin approval" confirmation right
-            # away. The reliable alert is the in-app pending badge/banner in
-            # Staff & Roles, and an admin approving is the real gate to signing in.
-            def _notify_async(nm=name, em=email):
-                try:
-                    _notify_admins_of_signup(nm, em)
-                    _send_verify_code(nm, em)
-                except Exception:
-                    logging.exception("background sign-up notification failed")
-            threading.Thread(target=_notify_async, daemon=True).start()
-            return render_template("signup.html", done=True)
-    return render_template("signup.html", error=error, done=False)
-
-
-_VERIFY_CODE_TTL = 1800  # seconds a mailed code stays valid (30 min)
-
-
-@app.route("/verify", methods=["GET", "POST"])
-def verify():
-    """Prove ownership of the email a sign-up claimed, by entering the code
-    that was mailed to it. Public (the requester has no session yet), but it
-    only flips email_verified — the account still needs admin approval."""
-    email = request.values.get("email", "").strip().lower()
-    acct = get_store().get_account_by_email(email) if email else None
-    if not acct:
-        return redirect(url_for("signup"))
-    if acct["email_verified"]:
-        return render_template("verify.html", email=email, verified=True,
-                               error="", sent=True)
-
-    error = ""
-    sent = request.values.get("sent", "1") == "1"
-    if request.method == "POST":
-        if request.form.get("resend"):
-            if _throttled("verify-resend", email, 3):
-                error = "Too many codes requested. Please wait a few minutes."
-            else:
-                _throttle_hit("verify-resend", email)
-                sent = _send_verify_code(acct["name"], email)
-                if not sent:
-                    error = ("The code couldn't be emailed (outbound mail may not be "
-                             "set up yet). An administrator can still verify you in person.")
-        else:
-            code = request.form.get("code", "").strip()
-            sent_at = None
-            try:
-                sent_at = datetime.fromisoformat(acct["verify_sent_at"] or "")
-            except ValueError:
-                pass
-            expired = (not sent_at
-                       or (datetime.now() - sent_at).total_seconds() > _VERIFY_CODE_TTL)
-            if _throttled("verify-code", email, 10):
-                error = "Too many attempts. Request a new code and try again later."
-            elif not (code and acct["verify_code"]
-                      and secrets.compare_digest(code, acct["verify_code"])):
-                _throttle_hit("verify-code", email)
-                error = "That code isn't right. Check the email and try again."
-            elif expired:
-                error = "That code has expired — request a new one below."
-            else:
-                get_store().mark_email_verified(acct["name"])
-                _audit("email_verified", email, actor=acct["name"])
-                return render_template("verify.html", email=email, verified=True,
-                                       error="", sent=True)
-    return render_template("verify.html", email=email, verified=False,
-                           error=error, sent=sent)
-
-
-@app.route("/account", methods=["GET", "POST"])
-@login_required
-def account_password():
-    """Manage your own account: the email you sign in with and your password."""
-    acct = _current_account()
-    error = ""
-    msg = ""
-    if request.method == "POST":
-        # Optional: change the email used to sign in.
-        new_email = request.form.get("email", "").strip().lower()
-        if new_email and new_email != (acct["email"] or "").lower():
-            if not config.is_allowed_email(new_email):
-                error = f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address."
-            else:
-                other = get_store().get_account_by_email(new_email)
-                if other and other["name"] != acct["name"]:
-                    error = "That email is already used by another account."
-                else:
-                    get_store().set_email(acct["name"], new_email)
-                    _audit("email_changed", f"sign-in email set to {new_email}")
-                    msg = "Sign-in email updated."
-                    acct = _current_account()
-
-        # Password change (only if the fields were filled in).
-        current = request.form.get("current", "")
-        new = request.form.get("new", "")
-        confirm = request.form.get("confirm", "")
-        if not error and (current or new or confirm):
-            if not acct["password_hash"] or not check_password_hash(acct["password_hash"], current):
-                error = "Your current password is incorrect."
-            elif not _valid_password(new):
-                error = f"New password must be at least {_MIN_PW_LEN} characters."
-            elif new != confirm:
-                error = "The new passwords don't match."
-            else:
-                get_store().set_password(acct["name"], _hash_password(new))
-                # The bump above revoked every session for this account —
-                # including this one. Re-stamp so the user changing their own
-                # password stays signed in; everyone else has to log in again.
-                fresh = get_store().get_account_by_name(acct["name"])
-                session["rev"] = fresh["session_rev"] if fresh else None
-                if hasattr(g, "_account"):
-                    del g._account
-                _audit("password_changed", "changed own password")
-                msg = (msg + " Password updated.").strip()
-    return render_template("account_password.html", error=error, msg=msg, acct=_current_account())
-
-
 # ---- Dashboard routes -----------------------------------------------------
 
 @app.route("/")
-@login_required
 def overview():
     data = _get_data()
     age_dist = data["age_distribution"]
@@ -1113,7 +615,6 @@ def overview():
 
 
 @app.route("/person")
-@login_required
 def person():
     data = _get_data()
     names = sorted({it["assignee"] for it in data["items"]})
@@ -1135,7 +636,6 @@ def person():
 
 
 @app.route("/projects")
-@login_required
 def projects():
     data = _get_data()
     ft = request.args.get("filter", "All")
@@ -1248,7 +748,6 @@ def projects():
 
 
 @app.route("/projects/doc", methods=["POST"])
-@manager_required
 def project_doc():
     get_store().set_received(
         request.form["item_key"],
@@ -1263,7 +762,6 @@ def project_doc():
 
 
 @app.route("/projects/type", methods=["POST"])
-@manager_required
 def project_type():
     # A typed-in custom value wins over the dropdown, so admins can introduce a
     # brand-new type on the spot (it then joins the list for everyone).
@@ -1276,7 +774,6 @@ def project_type():
 
 
 @app.route("/projects/complete", methods=["POST"])
-@manager_required
 def project_complete():
     pkey = request.form["pkey"]
     data = _get_data()
@@ -1293,7 +790,6 @@ def project_complete():
 
 
 @app.route("/projects/delete", methods=["POST"])
-@admin_required
 def project_delete():
     pkey = request.form["pkey"]
     data = _get_data()
@@ -1308,7 +804,6 @@ def project_delete():
 
 
 @app.route("/overdue")
-@login_required
 def overdue():
     data = _get_data()
     view = request.args.get("view", "overdue")
@@ -1367,20 +862,15 @@ def overdue():
 
 
 @app.route("/clients")
-@admin_required
 def clients():
-    """Admin-only bulk client deletion page."""
-    allowed = _is_admin()
-    projects = []
-    if allowed:
-        data = _get_data()
-        projects = sorted(data["projects"], key=lambda p: p["client"].lower())
-    return render_template("clients.html", allowed=allowed, projects=projects,
+    """Bulk client deletion page."""
+    data = _get_data()
+    projects = sorted(data["projects"], key=lambda p: p["client"].lower())
+    return render_template("clients.html", projects=projects,
                            msg=request.args.get("msg", ""))
 
 
 @app.route("/clients/delete", methods=["POST"])
-@admin_required
 def clients_delete():
     keys = request.form.getlist("pkey")
     data = _get_data()
@@ -1397,52 +887,40 @@ def clients_delete():
     return redirect(url_for("clients", msg=f"Deleted {count} {word}."))
 
 
+# The staff directory is the firm's roster, not an account list: there are no
+# logins, so a member is just a name and a role label. The roster drives the
+# staff dropdowns and is separate from the assignee names that arrive in an
+# import (those come from the Karbon data itself).
+_ROLES = ("Viewer", "Manager", "Admin")
+
+
 @app.route("/staff")
-@admin_required
 def staff():
     return render_template("staff.html",
                            members=get_store().get_staff(),
-                           pending=get_store().list_pending(),
+                           roles=_ROLES,
                            msg=request.args.get("msg", ""),
                            msg_type=request.args.get("mt", "ok"))
 
 
 @app.route("/staff/add", methods=["POST"])
-@admin_required
 def staff_add():
-    """Admin adds a member directly. Admin-created accounts are active
-    immediately (the admin vouches for them); the admin sets an initial password
-    to give the person, who can then change it."""
     name = request.form.get("name", "").strip()
-    email = request.form.get("email", "").strip().lower()
-    password = request.form.get("password", "")
     role = request.form.get("role", "Viewer")
-    if not name or not email:
-        return redirect(url_for("staff", msg="Name and email are both required.", mt="err"))
-    if not config.is_allowed_email(email):
-        return redirect(url_for("staff",
-                                msg=f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address.", mt="err"))
-    if not _valid_password(password):
-        return redirect(url_for("staff", msg=f"Set an initial password of at least {_MIN_PW_LEN} characters.", mt="err"))
-    try:
-        get_store().create_account(name, role, _hash_password(password), "active",
-                                   email=email, email_verified=1, today=date.today())
-    except sqlite3.IntegrityError:
-        return redirect(url_for("staff", msg="That name or email is already in use.", mt="err"))
-    _audit("staff_added", f"{name} <{email}> as {role}")
-    return redirect(url_for("staff",
-                            msg=f"{name} added as {role}. Give them the password you just set.",
-                            mt="ok"))
+    if role not in _ROLES:
+        role = "Viewer"
+    if not name:
+        return redirect(url_for("staff", msg="Enter the person's name.", mt="err"))
+    if any(m["name"].lower() == name.lower() for m in get_store().get_staff()):
+        return redirect(url_for("staff", msg=f"{name} is already on the list.", mt="err"))
+    get_store().upsert_staff(name, role, date.today())
+    _audit("staff_added", f"{name} as {role}")
+    return redirect(url_for("staff", msg=f"{name} added as {role}.", mt="ok"))
 
 
 @app.route("/staff/remove", methods=["POST"])
-@admin_required
 def staff_remove():
     name = request.form.get("name", "")
-    target = next((m for m in get_store().get_staff() if m["name"] == name), None)
-    if (target and target["role"] == "Admin" and target["has_login"]
-            and get_store().count_active_admins() <= 1):
-        return redirect(url_for("staff", msg="You can't remove the last admin.", mt="err"))
     if name:
         get_store().remove_staff(name)
         _audit("staff_removed", name)
@@ -1451,14 +929,11 @@ def staff_remove():
 
 
 @app.route("/staff/role", methods=["POST"])
-@admin_required
 def staff_role():
     name = request.form.get("name", "")
     role = request.form.get("role", "Viewer")
-    target = next((m for m in get_store().get_staff() if m["name"] == name), None)
-    if (target and target["role"] == "Admin" and role != "Admin" and target["has_login"]
-            and get_store().count_active_admins() <= 1):
-        return redirect(url_for("staff", msg="You can't demote the last admin.", mt="err"))
+    if role not in _ROLES:
+        role = "Viewer"
     if name:
         get_store().upsert_staff(name, role, date.today())
         _audit("role_changed", f"{name} -> {role}")
@@ -1466,71 +941,7 @@ def staff_role():
     return redirect(url_for("staff"))
 
 
-@app.route("/staff/reset", methods=["POST"])
-@admin_required
-def staff_reset():
-    """Set or reset a member's login (email + password), keyed by name. Use this
-    to give someone a new password to sign in with."""
-    name = request.form.get("name", "")
-    email = request.form.get("email", "").strip().lower()
-    password = request.form.get("password", "")
-    if not name or not email:
-        return redirect(url_for("staff", msg="Name and email are required.", mt="err"))
-    if not config.is_allowed_email(email):
-        return redirect(url_for("staff",
-                                msg=f"Email must be a @{config.ALLOWED_EMAIL_DOMAIN} address.", mt="err"))
-    if not _valid_password(password):
-        return redirect(url_for("staff", msg=f"Password must be at least {_MIN_PW_LEN} characters.", mt="err"))
-    other = get_store().get_account_by_email(email)
-    if other and other["name"] != name:
-        return redirect(url_for("staff", msg="That email is used by another account.", mt="err"))
-    try:
-        get_store().set_login(name, email, _hash_password(password))
-    except sqlite3.IntegrityError:
-        return redirect(url_for("staff", msg="That email is already in use.", mt="err"))
-    _audit("login_reset", f"credentials reset for {name} <{email}>")
-    return redirect(url_for("staff", msg=f"Login updated for {name}. Give them the new password.", mt="ok"))
-
-
-@app.route("/staff/approve", methods=["POST"])
-@admin_required
-def staff_approve():
-    name = request.form.get("name", "")
-    role = request.form.get("role", "Viewer")
-    if role not in ("Viewer", "Manager", "Admin"):
-        role = "Viewer"
-    if name:
-        acct = get_store().get_account_by_name(name)
-        # An unverified email means nobody has proven they own that address —
-        # the request could be an outsider typing a colleague's email. Block
-        # approval unless the admin explicitly overrides (verified in person).
-        if acct and not acct["email_verified"] and request.form.get("force") != "1":
-            return redirect(url_for(
-                "staff", mt="err",
-                msg=f"{name}'s email is unverified. Approve only after they enter their "
-                    f"emailed code, or tick the override box if you've confirmed it's "
-                    f"really them."))
-        get_store().approve_account(name, role)
-        _audit("account_approved",
-               f"{name} approved as {role}"
-               + ("" if (acct and acct["email_verified"]) else " (email unverified — admin override)"))
-        return redirect(url_for("staff", msg=f"Account approved as {role}.", mt="ok"))
-    return redirect(url_for("staff"))
-
-
-@app.route("/staff/reject", methods=["POST"])
-@admin_required
-def staff_reject():
-    name = request.form.get("name", "")
-    if name:
-        get_store().remove_staff(name)
-        _audit("signup_rejected", name)
-        return redirect(url_for("staff", msg="Sign-up request rejected.", mt="ok"))
-    return redirect(url_for("staff"))
-
-
 @app.route("/audit")
-@admin_required
 def audit():
     """Security audit trail: logins, failures, account/credential changes,
     imports, deletions, settings edits. Newest first.
@@ -1549,9 +960,8 @@ def audit():
 
 
 @app.route("/audit/archive/<week>")
-@admin_required
 def audit_archive(week):
-    """View one archived week's events. Admin-only (inherits @admin_required)."""
+    """View one archived week's events."""
     if not re.fullmatch(r"\d{4}-W\d{2}", week or ""):
         abort(404)
     store = get_store()
@@ -1561,64 +971,17 @@ def audit_archive(week):
 
 
 @app.route("/settings")
-@admin_required
 def settings():
-    mc = _mail_config()
     return render_template("settings.html",
                            overdue_days=_overdue_days(),
                            completed_statuses=_completed_statuses(),
                            all_statuses=_known_statuses(),
                            db_path=str(get_store().db_path),
-                           mail={"host": mc["host"], "port": mc["port"], "sender": mc["sender"],
-                                 "username": mc["username"], "use_tls": mc["use_tls"],
-                                 "has_password": bool(mc["password"]),
-                                 "configured": mailer.is_configured(mc)},
-                           my_email=(_current_account() or {}).get("email") or "",
                            msg=request.args.get("msg", ""),
                            msg_type=request.args.get("mt", "ok"))
 
 
-@app.route("/settings/mail", methods=["POST"])
-@admin_required
-def settings_mail():
-    """Save SMTP settings. The password is write-only: a blank field keeps the
-    stored one, so it's never echoed back to the page."""
-    saved = dict(get_store().get_setting("mail_config", {}) or {})
-    saved["host"] = request.form.get("host", "").strip() or "smtp.office365.com"
-    try:
-        saved["port"] = int(request.form.get("port", "587") or 587)
-    except ValueError:
-        saved["port"] = 587
-    saved["sender"] = request.form.get("sender", "").strip()
-    saved["username"] = request.form.get("username", "").strip()
-    saved["use_tls"] = request.form.get("use_tls") == "on"
-    pw = request.form.get("password", "")
-    if pw:
-        saved["password"] = vault.encrypt(pw)
-    elif saved.get("password"):
-        # Upgrade a legacy plaintext password to encrypted-at-rest in place.
-        saved["password"] = vault.encrypt(saved["password"])
-    get_store().set_setting("mail_config", saved)
-    _audit("mail_settings_saved",
-           f"host={saved['host']} sender={saved['sender']}"
-           + (" (password updated)" if pw else ""))
-    return redirect(url_for("settings", msg="Mail settings saved."))
-
-
-@app.route("/settings/mail/test", methods=["POST"])
-@admin_required
-def settings_mail_test():
-    to = request.form.get("to", "").strip() or (_current_account() or {}).get("email") or ""
-    if not to:
-        return redirect(url_for("settings", msg="Enter a recipient address for the test.", mt="err"))
-    ok, err = mailer.send_test(_mail_config(), to)
-    if ok:
-        return redirect(url_for("settings", msg=f"Test email sent to {to}.", mt="ok"))
-    return redirect(url_for("settings", msg=f"Test failed: {err}", mt="err"))
-
-
 @app.route("/settings/days", methods=["POST"])
-@admin_required
 def settings_days():
     try:
         days = max(1, int(request.form["days"]))
@@ -1630,7 +993,6 @@ def settings_days():
 
 
 @app.route("/settings/completed-statuses", methods=["POST"])
-@admin_required
 def settings_completed_statuses():
     statuses = request.form.getlist("completed_statuses")
     get_store().set_setting("completed_statuses", statuses)
@@ -1691,13 +1053,11 @@ def build_current_review_workbook() -> dict:
 
 
 @app.route("/review")
-@admin_required
 def weekly_review():
     return render_template("review.html", review=build_current_review())
 
 
 @app.route("/review/staff")
-@admin_required
 def weekly_review_staff():
     """One staff member's weekly-review detail page, reached by clicking a name on
     the review. Name comes in as a query arg (staff names have spaces/periods, so a
@@ -1709,7 +1069,6 @@ def weekly_review_staff():
 
 
 @app.route("/review.pdf")
-@admin_required
 def weekly_review_pdf():
     """The current review as a printable PDF, generated on demand from live data.
 
@@ -1726,7 +1085,6 @@ XLSX_MIMETYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.she
 
 
 @app.route("/review.xlsx")
-@admin_required
 def weekly_review_xlsx():
     """The review as an Excel workbook with ONE TAB PER STAFF MEMBER — their open
     work, grouped by work type, most overdue first (see review.build_staff_workbook).
@@ -1742,7 +1100,6 @@ def weekly_review_xlsx():
 # ---- Import flow ---------------------------------------------------------
 
 @app.route("/import", methods=["GET"])
-@admin_required
 def import_view():
     step = session.get("import_step", 0)
     ctx = session.get("import_ctx", {})
@@ -1754,7 +1111,6 @@ def import_view():
 
 
 @app.route("/import/upload", methods=["POST"])
-@admin_required
 def import_upload():
     f = request.files.get("csv_file")
     if not f or not f.filename:
@@ -1825,7 +1181,6 @@ def import_upload():
 
 
 @app.route("/import/run", methods=["POST"])
-@admin_required
 def import_run():
     ctx = session.get("import_ctx", {})
     tmp_path = ctx.get("tmp_path", "")
@@ -1889,7 +1244,6 @@ def import_run():
 
 
 @app.route("/import/cancel", methods=["POST"])
-@admin_required
 def import_cancel():
     ctx = session.pop("import_ctx", {})
     session.pop("import_step", None)
@@ -1906,16 +1260,14 @@ def import_cancel():
 
 # BIND_HOST is what the server listens on. "0.0.0.0" = every network interface,
 # so other computers on the internal LAN can reach it at http://<server>:5000 —
-# required for team hosting. (Use "127.0.0.1" to restrict to this machine only.)
-# The firewall must allow inbound TCP 5000 from the internal network for this to
-# be reachable; keep it off the public internet — the DB holds client data.
+# required for team hosting. Set NLC_BIND_HOST=127.0.0.1 to restrict the server
+# to this machine only (the right choice for a personal copy on a laptop).
 #
-# Behind the Cloudflare tunnel (NLC_BEHIND_CLOUDFLARE set) the default flips to
-# loopback: cloudflared runs on this same machine, and binding wider would let
-# LAN/VPN traffic skip the Cloudflare Access gate and talk to the app directly.
-# NLC_BIND_HOST overrides either default explicitly.
-BIND_HOST = (os.environ.get("NLC_BIND_HOST", "").strip()
-             or ("127.0.0.1" if cloudflare_hardening.enabled() else "0.0.0.0"))
+# There is NO sign-in: anything that can reach this port gets the whole
+# dashboard, and the database holds client data. So the firewall must allow
+# inbound TCP 5000 from the internal network ONLY — never expose this port to
+# the public internet.
+BIND_HOST = os.environ.get("NLC_BIND_HOST", "").strip() or "0.0.0.0"
 # LOCAL_HOST is only for talking to ourselves — the "already running?" check and
 # the auto-opened browser tab. A browser can't open http://0.0.0.0:5000, and you
 # can't connect() to 0.0.0.0 as a client, so those always use the loopback.

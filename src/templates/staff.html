@@ -1,116 +1,39 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Staff &amp; Roles</h1>
-<p class="subtitle">Add team members, approve access requests, and manage login credentials.</p>
+<p class="subtitle">The firm's roster, kept for reference alongside the imported data.</p>
 
 {% if msg %}
 <div class="msg {{ 'msg-ok' if msg_type == 'ok' else 'msg-err' }}">{{ msg }}</div>
 {% endif %}
 
-<!-- Role legend -->
 <div class="card mb-2">
-  <div class="card-title">Access levels</div>
-  <div style="display:flex;flex-direction:column;gap:10px">
-    <div class="row">
-      <span class="badge badge-admin">Admin</span>
-      <span style="font-size:12px">Full access — import data, edit settings, manage staff, delete clients</span>
-    </div>
-    <div class="row">
-      <span class="badge badge-manager">Manager</span>
-      <span style="font-size:12px">View analytics and mark items received / complete</span>
-    </div>
-    <div class="row">
-      <span class="badge badge-viewer">Viewer</span>
-      <span style="font-size:12px">Read-only access to the dashboard</span>
-    </div>
-  </div>
+  <div class="card-title">About this list</div>
+  <p class="text-muted" style="font-size:12px">
+    The dashboard has no sign-in, so a role here is a <strong>label only</strong> — it records
+    who does what at the firm and does not restrict what anyone can see or change.
+    Everyone who can open the dashboard can use every page.
+  </p>
+  <p class="text-muted" style="font-size:12px;margin-top:8px">
+    This roster is also separate from the staff names on the Overview and Overdue pages:
+    those come from the assignees in your Karbon import, so a person shows up there
+    whether or not they are listed here.
+  </p>
 </div>
-
-<!-- Pending access requests -->
-{% if pending %}
-<div class="card mb-2" style="border-color:var(--danger-border)">
-  <div class="card-title">Pending access requests ({{ pending|length }})</div>
-  <p class="text-muted mb-1" style="font-size:12px">People who signed up and chose a password.
-    Approve them with a role and they can sign in; or reject to delete the request.
-    Only approve <strong>⚠ Not verified</strong> requests if you've confirmed with the person
-    directly that the request is theirs — anyone on the internet can type a company email.</p>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr><th>Name</th><th>Email</th><th>Email verified</th><th>Approve as</th><th></th></tr>
-      </thead>
-      <tbody>
-        {% for p in pending %}
-        <tr>
-          <td style="font-weight:600">{{ p.name }}</td>
-          <td class="monospace">{{ p.email or '—' }}</td>
-          <td>
-            {% if p.email_verified %}
-            <span class="badge badge-done" title="They entered the code we emailed them — they control this address.">✓ Verified</span>
-            {% else %}
-            <span class="badge badge-overdue" title="Nobody has proven they own this address yet. It could be anyone typing a colleague's email.">⚠ Not verified</span>
-            {% endif %}
-          </td>
-          <td>
-            <form method="post" action="{{ url_for('staff_approve') }}" class="row" style="gap:6px">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <input type="hidden" name="name" value="{{ p.name }}">
-              <select name="role" style="font-size:11px;padding:4px 8px">
-                <option>Viewer</option>
-                <option>Manager</option>
-                <option>Admin</option>
-              </select>
-              <button type="submit" class="btn btn-primary btn-sm">Approve</button>
-              {% if not p.email_verified %}
-              <label style="display:flex;align-items:center;gap:5px;font-size:10px;text-transform:none;
-                            letter-spacing:0;margin:0;cursor:pointer;color:var(--danger)">
-                <input type="checkbox" name="force" value="1" style="width:13px;height:13px">
-                I confirmed their identity myself
-              </label>
-              {% endif %}
-            </form>
-          </td>
-          <td>
-            <form method="post" action="{{ url_for('staff_reject') }}"
-                  data-confirm="Reject and delete the request from {{ p.name }}?">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <input type="hidden" name="name" value="{{ p.name }}">
-              <button type="submit" class="btn btn-danger btn-sm">Reject</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endif %}
 
 <!-- Add member -->
 <div class="card mb-2">
   <div class="card-title">Add staff member</div>
-  <p class="text-muted mb-1" style="font-size:12px">Creates an active account (no approval needed —
-    you're vouching for them). Set an initial password and give it to them; they can change it later.</p>
   <form method="post" action="{{ url_for('staff_add') }}" class="row" style="align-items:flex-end">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div>
       <label>Full name</label>
-      <input type="text" name="name" placeholder="e.g. Sarah Johnson" style="width:190px" required>
-    </div>
-    <div>
-      <label>Work email</label>
-      <input type="email" name="email" placeholder="sjohnson@nlcfcpa.com" style="width:200px" required>
-    </div>
-    <div>
-      <label>Initial password</label>
-      <input type="text" name="password" placeholder="min {{ min_pw_len }} characters" style="width:150px" required>
+      <input type="text" name="name" placeholder="e.g. Sarah Johnson" style="width:220px" required>
     </div>
     <div>
       <label>Role</label>
       <select name="role">
-        <option>Viewer</option>
-        <option>Manager</option>
-        <option>Admin</option>
+        {% for r in roles %}<option>{{ r }}</option>{% endfor %}
       </select>
     </div>
     <div>
@@ -126,53 +49,26 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr>
-          <th>Name</th>
-          <th>Email</th>
-          <th>Role</th>
-          <th>Login</th>
-          <th></th>
-          <th></th>
-        </tr>
+        <tr><th>Name</th><th>Role</th><th></th></tr>
       </thead>
       <tbody>
         {% for m in members %}
         <tr>
           <td style="font-weight:600">{{ m.name }}</td>
-          <td class="monospace">{{ m.email or m.username or '—' }}</td>
           <td>
             <form method="post" action="{{ url_for('staff_role') }}" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <input type="hidden" name="name" value="{{ m.name }}">
               <select name="role" data-autosubmit style="font-size:11px;padding:4px 8px">
-                {% for r in ['Viewer','Manager','Admin'] %}
+                {% for r in roles %}
                 <option {{ 'selected' if m.role == r }}>{{ r }}</option>
                 {% endfor %}
               </select>
             </form>
           </td>
           <td>
-            {% if m.has_login %}<span class="badge badge-done">Can sign in</span>
-            {% else %}<span class="badge badge-overdue">No login</span>{% endif %}
-          </td>
-          <td>
-            <details>
-              <summary style="cursor:pointer;font-size:11px;color:var(--accent);font-weight:700">
-                {{ 'Reset login' if m.has_login else 'Set login' }}
-              </summary>
-              <form method="post" action="{{ url_for('staff_reset') }}" class="row mt-1" style="gap:6px">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <input type="hidden" name="name" value="{{ m.name }}">
-                <input type="email" name="email" value="{{ m.email or '' }}"
-                       placeholder="email@nlcfcpa.com" style="width:170px" required>
-                <input type="text" name="password" placeholder="new password" style="width:130px" required>
-                <button type="submit" class="btn btn-secondary btn-sm">Save</button>
-              </form>
-            </details>
-          </td>
-          <td>
             <form method="post" action="{{ url_for('staff_remove') }}"
-                  data-confirm="Remove {{ m.name }}?">
+                  data-confirm="Remove {{ m.name }} from the roster?">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <input type="hidden" name="name" value="{{ m.name }}">
               <button type="submit" class="btn btn-danger btn-sm">Remove</button>

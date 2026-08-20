@@ -1,22 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Delete clients</h1>
-<p class="subtitle">Admin only. Select one or more clients and permanently remove them and all their documents.</p>
+<p class="subtitle">Select one or more clients and permanently remove them and all their documents.</p>
 
 {% if msg %}
 <div class="msg msg-ok">{{ msg }}</div>
 {% endif %}
-
-{% if not allowed %}
-<div class="card">
-  <div class="card-title text-danger">Admins only</div>
-  <p style="font-size:13px;color:var(--muted)">
-    This section is restricted to administrators. Use the <strong>Acting as</strong> selector at the
-    bottom of the sidebar to switch to an Admin account, or ask an administrator to grant you the
-    Admin role on the <a href="{{ url_for('staff') }}">Staff &amp; Roles</a> page.
-  </p>
-</div>
-{% else %}
 
 <form method="post" action="{{ url_for('clients_delete') }}" id="deleteForm">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -203,5 +192,4 @@ document.getElementById('deleteForm').addEventListener('submit', function (e) {
 
 updateCount();  // set the initial button labels on page load
 </script>
-{% endif %}
 {% endblock %}
